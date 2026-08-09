@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security report / 安全漏洞
+    url: https://github.com/AKin-lvyifang/codex-execution-guard/security/advisories/new
+    about: Report vulnerabilities privately. Do not post sensitive evidence in a public issue. / 请私下报告漏洞，不要在公开 Issue 中粘贴敏感证据。

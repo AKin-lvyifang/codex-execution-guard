@@ -1,0 +1,4 @@
+interface:
+  display_name: "Execution Guard"
+  short_description: "Control and execute one bounded Codex iteration"
+  default_prompt: "Use $execution-guard to create or reuse the one execution task and carry approved work through local completion."

@@ -1,0 +1,81 @@
+name: Bug report / 缺陷报告
+description: Report a reproducible problem in the Skill, Hooks, or local state helpers. / 报告可复现的 Skill、Hooks 或本地状态问题。
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a problem. Remove credentials, personal paths, live contracts, registry data, and private source code before submitting.
+
+        感谢反馈。提交前请移除凭据、个人路径、实时合同、registry 数据和私有源码。
+  - type: input
+    id: version
+    attributes:
+      label: Plugin version / 插件版本
+      placeholder: 0.2.0+codex.20260809142253
+    validations:
+      required: true
+  - type: input
+    id: host
+    attributes:
+      label: Codex host / Codex 宿主
+      description: CLI or desktop app, including the visible version when available. / CLI 或桌面版；如可见，请附版本。
+      placeholder: ChatGPT desktop on macOS
+    validations:
+      required: true
+  - type: input
+    id: hook_or_tool
+    attributes:
+      label: Hook event or tool path / Hook 事件或工具路径
+      placeholder: PreToolUse, Stop, update_plan, shell_command...
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction / 最小复现
+      description: List the smallest sequence that reproduces the problem. / 写出能复现问题的最短步骤。
+      placeholder: |
+        1. Install and trust the current Hooks.
+        2. Start a fresh task.
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior / 预期行为
+    validations:
+      required: true
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior / 实际行为
+      description: Include exact error text when it is safe to share. / 可以公开时，请附完整错误文本。
+    validations:
+      required: true
+  - type: dropdown
+    id: ordinary_session
+    attributes:
+      label: Is an ordinary unmarked session affected? / 普通未标记会话是否受影响？
+      options:
+        - No / 否
+        - Yes / 是
+        - Unknown / 不确定
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics / 已脱敏诊断信息
+      description: Add relevant status, branch, HEAD, or Hook output only after removing private data. / 仅在脱敏后附相关状态、分支、HEAD 或 Hook 输出。
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks / 提交检查
+      options:
+        - label: I tested with a fresh task after the latest install or update. / 我已在最新安装或更新后使用新任务测试。
+          required: true
+        - label: I removed credentials, private paths, live contracts, registry data, transcripts, and private code. / 我已移除凭据、私有路径、实时合同、registry 数据、聊天记录和私有代码。
+          required: true

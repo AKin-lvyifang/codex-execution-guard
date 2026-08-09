@@ -1,0 +1,53 @@
+name: Feature request / 功能建议
+description: Propose a bounded workflow or host-integration improvement. / 提议边界清楚的工作流或宿主集成改进。
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the concrete workflow and the failure or friction you observed. The project avoids speculative gate frameworks, telemetry, and remote services without a clear accepted use case.
+
+        请说明真实工作流，以及已经观察到的失败或麻烦。没有明确场景时，本项目不会增加理论门禁、遥测或远程服务。
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Current workflow / 当前工作流
+      description: What are you trying to complete, and where does the current plugin stop helping? / 你想完成什么，当前插件在哪一步无法继续帮助？
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Observed evidence / 已观察到的证据
+      description: Share a redacted failure, repeated manual step, or host limitation. / 请附脱敏后的失败、重复手动步骤或宿主限制。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior / 建议行为
+      description: Describe the smallest useful outcome, not an implementation mandate. / 描述最小可用结果，不必指定内部实现。
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance example / 验收示例
+      description: What observable result would show that this works? / 什么可观察结果能证明功能有效？
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 已尝试的替代办法
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Boundary check / 边界检查
+      options:
+        - label: This request does not require uploading credentials, transcripts, private code, or live registry data. / 本建议不需要上传凭据、聊天记录、私有代码或实时 registry 数据。
+          required: true
+        - label: I have called out any MCP, server, telemetry, remote Git, or release implications. / 我已说明其中涉及的 MCP、服务器、遥测、远程 Git 或发布影响。
+          required: true

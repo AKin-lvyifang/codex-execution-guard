@@ -1,0 +1,20 @@
+{
+  "name": "codex-execution-guard",
+  "interface": {
+    "displayName": "Codex Execution Guard"
+  },
+  "plugins": [
+    {
+      "name": "codex-execution-guard",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-execution-guard"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

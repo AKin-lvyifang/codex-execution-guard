@@ -1,0 +1,84 @@
+{
+  "description": "Opt-in lifecycle guard for versioned execution contracts.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/execution_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Loading execution contract",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^(Bash|apply_patch|Edit|Write|update_plan|Agent|spawn_agent|create_thread|fork_thread)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/execution_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking execution boundary",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "^(Bash|apply_patch|Edit|Write|update_plan)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/execution_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Recording execution progress",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "^(manual|auto)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/execution_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "matcher": "^(resume|compact)$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/execution_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Restoring execution checkpoint",
+            "additionalContextLimit": 4000
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${PLUGIN_ROOT}/scripts/execution_guard.py\"",
+            "timeout": 10,
+            "statusMessage": "Checking execution completion"
+          }
+        ]
+      }
+    ]
+  }
+}

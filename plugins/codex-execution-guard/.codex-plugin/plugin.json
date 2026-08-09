@@ -1,0 +1,37 @@
+{
+  "name": "codex-execution-guard",
+  "version": "0.2.0+codex.20260809142253",
+  "description": "Control and execute one bounded Codex implementation iteration.",
+  "author": {
+    "name": "AKin-lvyifang",
+    "url": "https://github.com/AKin-lvyifang"
+  },
+  "homepage": "https://github.com/AKin-lvyifang/codex-execution-guard#readme",
+  "repository": "https://github.com/AKin-lvyifang/codex-execution-guard",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "execution",
+    "planning",
+    "worktree",
+    "hooks",
+    "agents"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Codex Execution Guard",
+    "shortDescription": "Create or reuse one guarded Codex execution task.",
+    "longDescription": "Route approved work into the correct native Codex task, persist its worktree ownership and real Git baseline, preserve stable execution across compaction, and return an evidence-based local receipt.",
+    "developerName": "AKin-lvyifang",
+    "category": "Productivity",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/AKin-lvyifang/codex-execution-guard",
+    "brandColor": "#0071E3",
+    "defaultPrompt": [
+      "Use $execution-guard to create or reuse one task and implement this approved plan.",
+      "Resume this approved iteration with $execution-guard without changing its scope."
+    ]
+  }
+}
