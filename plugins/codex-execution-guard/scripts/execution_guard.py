@@ -386,8 +386,16 @@ def parse_control(explanation: Any, state: dict[str, Any], *, apply: bool) -> No
 
 
 def is_bootstrap_command(command: str) -> bool:
-    lines = [line.strip() for line in command.splitlines() if line.strip()]
-    return bool(lines) and all(any(pattern.fullmatch(line) for pattern in BOOTSTRAP_COMMANDS) for line in lines)
+    segments = [
+        segment.strip()
+        for line in command.splitlines()
+        for segment in line.split(";")
+        if segment.strip()
+    ]
+    return bool(segments) and all(
+        any(pattern.fullmatch(segment) for pattern in BOOTSTRAP_COMMANDS)
+        for segment in segments
+    )
 
 
 def is_write_tool(tool_name: str, tool_input: Any) -> bool:
@@ -427,6 +435,10 @@ def current_step(state: dict[str, Any]) -> str | None:
 
 
 def response_outcome(response: Any) -> str:
+    if isinstance(response, dict):
+        exit_code = response.get("exit_code")
+        if isinstance(exit_code, int):
+            return "passed" if exit_code == 0 else "failed"
     text = json.dumps(response, sort_keys=True) if not isinstance(response, str) else response
     nonzero = re.search(r"(?:exit code|returncode)[^0-9-]*(-?\d+)", text, re.IGNORECASE)
     if nonzero:

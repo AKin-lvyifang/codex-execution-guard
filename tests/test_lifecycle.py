@@ -242,6 +242,49 @@ class LifecycleFixtureTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertFalse((self.data / "sessions" / "inline.json").exists())
 
+    def test_bootstrap_allows_only_exact_commands_across_semicolon_or_newline_sequences(self) -> None:
+        self.activate()
+        allowed_commands = (
+            "pwd; git branch --show-current\n"
+            "git rev-parse HEAD; git status --porcelain=v1"
+        )
+        allowed = self.run_hook(
+            self.event(
+                "guarded",
+                "PreToolUse",
+                turn_id="turn-2",
+                tool_name="Bash",
+                tool_use_id="bootstrap-allowed",
+                tool_input={"command": allowed_commands},
+            )
+        )
+        self.assertIsNone(allowed)
+
+        rejected_commands = (
+            "pwd; touch /tmp/execution-guard-regression",
+            "pwd > /tmp/execution-guard-regression",
+            "pwd | cat",
+            "pwd && git status --short",
+            "pwd || git status --short",
+            "pwd; $(touch /tmp/execution-guard-regression)",
+        )
+        for index, command in enumerate(rejected_commands):
+            with self.subTest(command=command):
+                denied = self.run_hook(
+                    self.event(
+                        "guarded",
+                        "PreToolUse",
+                        turn_id="turn-2",
+                        tool_name="Bash",
+                        tool_use_id=f"bootstrap-denied-{index}",
+                        tool_input={"command": command},
+                    )
+                )
+                self.assertEqual(
+                    denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+                    "deny",
+                )
+
     def test_guarded_write_waits_for_environment_and_exact_plan(self) -> None:
         self.activate()
         denied = self.run_hook(
@@ -538,6 +581,35 @@ class LifecycleFixtureTests(unittest.TestCase):
         after = self.state()["evidence"]
         self.assertEqual(before, after)
         self.assertIn("not new progress", duplicate["hookSpecificOutput"]["additionalContext"])  # type: ignore[index]
+
+    def test_structured_exit_code_and_legacy_outcomes_are_classified(self) -> None:
+        self.activate()
+        self.register()
+        cases = (
+            ({"exit_code": 0}, "passed"),
+            ({"exit_code": 1}, "failed"),
+            ({"exit_code": -9}, "failed"),
+            ("Exit code: 0", "passed"),
+            ({"returncode": 2}, "failed"),
+        )
+        for index, (tool_response, _) in enumerate(cases):
+            validation = self.event(
+                "guarded",
+                "PostToolUse",
+                turn_id="turn-3",
+                tool_name="Bash",
+                tool_use_id=f"structured-outcome-{index}",
+                tool_input={"command": f"python3 -m unittest structured_outcome_{index}"},
+                tool_response=tool_response,
+            )
+            self.assertIsNone(self.run_hook(validation))
+
+        outcomes = [
+            item["outcome"]
+            for item in self.state()["evidence"]
+            if item["kind"] == "validation"
+        ]
+        self.assertEqual(outcomes, [expected for _, expected in cases])
 
     def test_baseline_mismatch_and_corrupt_state_fail_with_recovery(self) -> None:
         bad = self.contract()

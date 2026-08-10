@@ -6,6 +6,11 @@ All notable changes to this project are documented here. 本文件记录项目�
 
 - No changes yet. / 暂无变更。
 
+## 0.2.1 - 2026-08-10
+
+- Fixed validation outcomes for structured `exit_code` responses while preserving text and `returncode` compatibility. / 修复结构化 `exit_code` 响应的验证结果分类，同时保留文本和 `returncode` 兼容性。
+- Allowed semicolon-separated pre-plan bootstrap commands only when every non-empty segment matches the existing whitelist. / 仅当每个非空片段都匹配现有白名单时，才允许计划登记前使用分号串联启动命令。
+
 ## 0.2.0 - 2026-08-09
 
 - Added control orchestration for task creation and reuse. / 增加主控的新建与复用任务编排。
