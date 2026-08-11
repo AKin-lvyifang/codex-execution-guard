@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -142,6 +143,27 @@ def atomic_write(path: Path, state: dict[str, Any]) -> None:
             temporary.unlink()
 
 
+def archive_terminal_state(path: Path, state: dict[str, Any]) -> Path:
+    payload = canonical_json_bytes(state)
+    digest = hashlib.sha256(payload).hexdigest()
+    archive = (
+        path.parent.parent
+        / "session-archive"
+        / safe_session_name(state["session_id"])
+        / f"{digest}.json"
+    )
+    if archive.exists():
+        try:
+            existing = json.loads(archive.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise GuardError(f"Archived terminal state is unreadable at {archive}: {exc}") from exc
+        if canonical_json_bytes(existing) != payload:
+            raise GuardError(f"Archived terminal state conflicts with its content address at {archive}.")
+        return archive
+    atomic_write(archive, state)
+    return archive
+
+
 def contract_marker(prompt: str) -> re.Match[str] | None:
     return MARKER_PATTERN.search(prompt)
 
@@ -187,14 +209,14 @@ def contract_prompt_body(prompt: str) -> str:
     return enclosed[input_start + len(INPUT_OPEN) : input_end]
 
 
-def parse_contract(
+def parse_contract_submission(
     prompt: str,
     *,
     event: dict[str, Any] | None = None,
     data_root: Path | None = None,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, str | None]:
     if not contract_prompt_has_marker(prompt):
-        return None
+        return None, None
     prompt = contract_prompt_body(prompt)
     marker = contract_marker(prompt)
     if marker is None:
@@ -218,7 +240,7 @@ def parse_contract(
         contract = artifact["contract"]
         validate_contract(contract)
         validate_reference_binding(artifact, event, data_root)
-        return contract
+        return contract, "reference"
     if object_at < 0:
         raise GuardError(
             f"{MARKER} must be followed by one valid private reference or a JSON contract object."
@@ -228,6 +250,16 @@ def parse_contract(
     except json.JSONDecodeError as exc:
         raise GuardError(f"The execution contract JSON is invalid: {exc}") from exc
     validate_contract(contract)
+    return contract, "inline"
+
+
+def parse_contract(
+    prompt: str,
+    *,
+    event: dict[str, Any] | None = None,
+    data_root: Path | None = None,
+) -> dict[str, Any] | None:
+    contract, _ = parse_contract_submission(prompt, event=event, data_root=data_root)
     return contract
 
 
@@ -600,6 +632,10 @@ def complete(state: dict[str, Any]) -> bool:
     )
 
 
+def terminal(state: dict[str, Any]) -> bool:
+    return state.get("escalation") is not None or complete(state)
+
+
 def receipt(state: dict[str, Any], cwd: str) -> str:
     verify_execution_location(state, cwd)
     actual = git_identity(cwd)
@@ -692,15 +728,75 @@ def on_user_prompt(event: dict[str, Any], path: Path, state: dict[str, Any] | No
     prompt = event.get("prompt")
     if not isinstance(prompt, str):
         raise GuardError("UserPromptSubmit is missing prompt text.")
-    contract = parse_contract(prompt, event=event, data_root=path.parent.parent)
+    contract, submission_kind = parse_contract_submission(
+        prompt,
+        event=event,
+        data_root=path.parent.parent,
+    )
     if contract is None:
         if state:
-            context("UserPromptSubmit", f"Execution Guard remains active for {state['contract']['contract_id']}.")
+            message = f"Execution Guard remains active for {state['contract']['contract_id']}."
+            if terminal(state):
+                message += (
+                    " The contract is terminal and write-locked until a valid private-reference "
+                    "revision is activated."
+                )
+            context("UserPromptSubmit", message)
         return
     if state:
-        if state["contract"] != contract:
-            emit({"decision": "block", "reason": "A different execution contract is already active in this session."})
+        if terminal(state) and submission_kind != "reference":
+            emit(
+                {
+                    "decision": "block",
+                    "reason": "A terminal contract can continue only through a private reference "
+                    "that revalidates active V2 ownership.",
+                }
+            )
             return
+        if state["contract"] != contract:
+            active_id = state["contract"]["contract_id"]
+            incoming_id = contract["contract_id"]
+            if active_id != incoming_id:
+                emit(
+                    {
+                        "decision": "block",
+                        "reason": "A different contract_id cannot replace guarded state in this session.",
+                    }
+                )
+                return
+            if not terminal(state):
+                emit(
+                    {
+                        "decision": "block",
+                        "reason": "A non-terminal execution contract cannot be replaced in this session.",
+                    }
+                )
+                return
+            previous_baseline = state["contract"]["baseline"]
+            incoming_baseline = contract["baseline"]
+            if (
+                str(Path(previous_baseline["worktree"]).resolve())
+                != str(Path(incoming_baseline["worktree"]).resolve())
+                or previous_baseline["branch"] != incoming_baseline["branch"]
+            ):
+                emit(
+                    {
+                        "decision": "block",
+                        "reason": "A revised contract must reuse the same worktree and branch.",
+                    }
+                )
+                return
+            verify_baseline({"contract": contract}, event["cwd"])
+            try:
+                archive_terminal_state(path, state)
+                revised_state = new_state(event, contract)
+                atomic_write(path, revised_state)
+            except OSError as exc:
+                raise GuardError(
+                    "Revised contract activation failed; prior terminal state remains active: "
+                    f"{exc}"
+                ) from exc
+            state = revised_state
     else:
         state = new_state(event, contract)
         atomic_write(path, state)
@@ -710,8 +806,13 @@ def on_user_prompt(event: dict[str, Any], path: Path, state: dict[str, Any] | No
 def on_pre_tool(event: dict[str, Any], state: dict[str, Any]) -> None:
     tool_name = event.get("tool_name")
     tool_input = event.get("tool_input")
-    if state.get("escalation") is not None and (tool_name == "update_plan" or is_write_tool(str(tool_name), tool_input)):
-        block_pre_tool("An escalation is already registered; return the recorded blocker to the control task.")
+    if terminal(state) and (
+        tool_name == "update_plan" or is_write_tool(str(tool_name), tool_input)
+    ):
+        block_pre_tool(
+            "The execution contract is terminal; update_plan and writes remain locked until "
+            "a new private-reference revision is successfully activated."
+        )
         return
     if tool_name in {"Agent", "spawn_agent", "create_thread", "fork_thread"}:
         block_pre_tool("This guarded iteration already has its unique execution task; return new work to the control task.")
@@ -748,6 +849,8 @@ def on_pre_tool(event: dict[str, Any], state: dict[str, Any]) -> None:
 
 
 def on_post_tool(event: dict[str, Any], path: Path, state: dict[str, Any]) -> None:
+    if terminal(state):
+        return
     tool_name = event.get("tool_name")
     if tool_name == "update_plan":
         normalized = validate_plan_update(state, event.get("tool_input"))
@@ -829,13 +932,15 @@ def main() -> int:
         elif event_name == "PostToolUse":
             on_post_tool(event, path, state)
         elif event_name == "PreCompact":
-            state["git"] = git_identity(event["cwd"])
-            state["last_event"] = "PreCompact"
-            atomic_write(path, state)
+            if not terminal(state):
+                state["git"] = git_identity(event["cwd"])
+                state["last_event"] = "PreCompact"
+                atomic_write(path, state)
         elif event_name == "SessionStart":
-            state["git"] = git_identity(event["cwd"])
-            state["last_event"] = f"SessionStart:{event.get('source')}"
-            atomic_write(path, state)
+            if not terminal(state):
+                state["git"] = git_identity(event["cwd"])
+                state["last_event"] = f"SessionStart:{event.get('source')}"
+                atomic_write(path, state)
             context("SessionStart", concise_restore(state, event["cwd"]))
         elif event_name == "Stop":
             if state.get("escalation") is not None:

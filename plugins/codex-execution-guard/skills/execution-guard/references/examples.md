@@ -34,12 +34,30 @@ Route: requested Terra Max from local authorized-pool fallback; not live host di
 
 ## Create-or-reuse decisions
 
+Freeze lane identity before the first claim:
+
 ```text
-Reuse: this is a test and documentation follow-up for the same goal, scope, and acceptance; active iteration ownership matches the native task.
+Feature-chain key: feature-slug-v1
+Implementation iteration: feature-slug-v1-implementation
+Acceptance iteration, only if isolation is required: feature-slug-v1-acceptance
 ```
 
 ```text
-Stop: the proposed work may add independent user value and new acceptance; keep the decision in control and do not create a task.
+Reuse implementation: this acceptance detail, retry, optimization, failed-acceptance fix, test, or documentation belongs to the same feature chain; active ownership matches the native task.
+```
+
+```text
+Reuse acceptance: independent acceptance still needs its existing isolated lane; send code fixes back to implementation and return here only for recheck.
+```
+
+Claim `feature-slug-v1-acceptance` again for every recheck. The existing ownership yields reuse or `reconcile_only`; never create `feature-slug-v1-acceptance-v2`, `-v3`, or a timestamped retry. This is control policy, not a registry schema constraint.
+
+```text
+Create: the proposed work is explicit independent user value, or the prior feature chain was merged or cancelled.
+```
+
+```text
+Stop: lane ownership or independence is ambiguous; keep the decision in control and do not create a task.
 ```
 
 ## One-shot creation claim
@@ -78,6 +96,25 @@ Execution contract reference: sha256:<64 lowercase hexadecimal characters>
 ```
 
 Do not paste the artifact path or full JSON into visible chat. If target `PLUGIN_DATA` cannot be staged because control and execution are on different hosts, use the explicit `fold-inline` output. Never use inline fallback to bypass a same-host validation error.
+
+## Terminal contract revision
+
+After completion or escalation, marker-free follow-up leaves the terminal session write-locked. Reuse the same task and active ownership only through the private short reference:
+
+```text
+Revise: verify the current clean baseline, keep the same contract_id/worktree/branch, stage the revised contract, and send its short reference. The Hook privately archives the prior terminal state.
+```
+
+Inline V1 remains valid for first activation only. Do not use it to revise terminal state, closed ownership, a non-terminal session, or a different `contract_id`. If the archive succeeds but the new session-state write fails, retry the same reference: the old terminal state remains locked and the content-addressed archive is reused.
+
+## Ownership close
+
+Completion receipts, acceptance failures, escalations, and phase closeout keep ownership active. Close only the whole feature-chain outcome:
+
+```text
+control_plane.py ... close --iteration feature-v1 --expected-baseline <full-head> --outcome merged
+control_plane.py ... close --iteration feature-v1 --expected-baseline <full-head> --outcome cancelled
+```
 
 ## Host-limited acceptance
 

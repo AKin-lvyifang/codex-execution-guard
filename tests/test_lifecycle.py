@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -32,6 +33,7 @@ def load_module(name: str, path: Path) -> Any:
 
 
 control = load_module("lifecycle_control_plane", CONTROL_SCRIPT)
+execution = load_module("lifecycle_execution_guard", SCRIPT)
 
 
 class LifecycleFixtureTests(unittest.TestCase):
@@ -226,17 +228,24 @@ class LifecycleFixtureTests(unittest.TestCase):
             tool_input["explanation"] = explanation
         return tool_input
 
-    def register(self, session_id: str = "guarded") -> None:
-        tool_input = self.approved_plan()
+    def apply_plan_update(
+        self,
+        session_id: str,
+        tool_input: dict[str, Any],
+        *,
+        plugin_data: Path | None = None,
+        tool_use_id: str,
+    ) -> dict[str, Any]:
         allowed = self.run_hook(
             self.event(
                 session_id,
                 "PreToolUse",
                 turn_id="turn-2",
                 tool_name="update_plan",
-                tool_use_id="plan-1",
+                tool_use_id=tool_use_id,
                 tool_input=tool_input,
-            )
+            ),
+            plugin_data=plugin_data,
         )
         self.assertIsNone(allowed)
         accepted = self.run_hook(
@@ -245,10 +254,26 @@ class LifecycleFixtureTests(unittest.TestCase):
                 "PostToolUse",
                 turn_id="turn-2",
                 tool_name="update_plan",
-                tool_use_id="plan-1",
+                tool_use_id=tool_use_id,
                 tool_input=tool_input,
                 tool_response={"ok": True},
-            )
+            ),
+            plugin_data=plugin_data,
+        )
+        self.assertIsNotNone(accepted)
+        return accepted  # type: ignore[return-value]
+
+    def register(
+        self,
+        session_id: str = "guarded",
+        *,
+        plugin_data: Path | None = None,
+    ) -> None:
+        accepted = self.apply_plan_update(
+            session_id,
+            self.approved_plan(),
+            plugin_data=plugin_data,
+            tool_use_id="plan-1",
         )
         self.assertIn("accepted", accepted["hookSpecificOutput"]["additionalContext"])  # type: ignore[index]
 
@@ -465,6 +490,574 @@ class LifecycleFixtureTests(unittest.TestCase):
             inline_activated["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
         )
         self.assertEqual(self.state("native-inline-task")["contract"], inline_contract)
+
+    def test_completed_contract_rolls_over_same_session_and_archives_prior_state(self) -> None:
+        session_id = "rollover-complete"
+        contract = self.contract(contract_id="rollover-v1")
+        registry, handoff = self.stage_reference(contract, session_id=session_id)
+        self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=handoff["prompt"],
+            )
+        )
+        self.register(session_id)
+        completion = self.approved_plan(
+            complete=True,
+            explanation=(
+                'execution_guard: {"acceptance_complete":["A1","A2"],'
+                '"evidence":"Initial contract fixtures passed"}'
+            ),
+        )
+        self.assertIsNone(
+            self.run_hook(
+                self.event(
+                    session_id,
+                    "PreToolUse",
+                    turn_id="turn-2",
+                    tool_name="update_plan",
+                    tool_use_id="complete-initial",
+                    tool_input=completion,
+                )
+            )
+        )
+        self.run_hook(
+            self.event(
+                session_id,
+                "PostToolUse",
+                turn_id="turn-2",
+                tool_name="update_plan",
+                tool_use_id="complete-initial",
+                tool_input=completion,
+                tool_response={"ok": True},
+            )
+        )
+        prior = self.state(session_id)
+
+        (self.repo / "tracked.txt").write_text("completed baseline\n", encoding="utf-8")
+        self.git("add", "tracked.txt")
+        self.git("commit", "-m", "complete initial contract")
+        revised_head = self.git("rev-parse", "HEAD")
+        registry.update(
+            contract["contract_id"],
+            expected_baseline=self.head,
+            changes={"baseline": revised_head},
+        )
+        revised = self.contract(
+            contract_id=contract["contract_id"],
+            goal="Apply the approved revision in the same implementation lane",
+            baseline={**contract["baseline"], "head": revised_head},
+        )
+        _, revised_handoff = self.stage_reference(revised, session_id=session_id)
+
+        rolled_over = self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-3",
+                prompt=revised_handoff["prompt"],
+            )
+        )
+
+        self.assertIn(
+            "activated contract rollover-v1",
+            rolled_over["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+        )
+        current = self.state(session_id)
+        self.assertEqual(current["contract"], revised)
+        self.assertFalse(current["environment_verified"])
+        self.assertFalse(current["plan_registered"])
+        archives = list((self.data / "session-archive" / session_id).glob("*.json"))
+        self.assertEqual(len(archives), 1)
+        canonical = json.dumps(
+            prior,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        self.assertEqual(archives[0].stem, hashlib.sha256(canonical).hexdigest())
+        self.assertEqual(json.loads(archives[0].read_text(encoding="utf-8")), prior)
+
+    def test_escalated_contract_can_roll_over_with_same_verified_baseline(self) -> None:
+        session_id = "rollover-escalated"
+        contract = self.contract(contract_id="rollover-escalated-v1")
+        _, handoff = self.stage_reference(contract, session_id=session_id)
+        self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=handoff["prompt"],
+            )
+        )
+        self.register(session_id)
+        escalation = self.approved_plan(
+            explanation=(
+                'execution_guard: {"escalation":{"reason":"Revision required",'
+                '"evidence":"The first acceptance contract was incomplete"}}'
+            )
+        )
+        self.assertIsNone(
+            self.run_hook(
+                self.event(
+                    session_id,
+                    "PreToolUse",
+                    turn_id="turn-2",
+                    tool_name="update_plan",
+                    tool_use_id="escalate-initial",
+                    tool_input=escalation,
+                )
+            )
+        )
+        self.run_hook(
+            self.event(
+                session_id,
+                "PostToolUse",
+                turn_id="turn-2",
+                tool_name="update_plan",
+                tool_use_id="escalate-initial",
+                tool_input=escalation,
+                tool_response={"ok": True},
+            )
+        )
+        prior = self.state(session_id)
+        revised = self.contract(
+            contract_id=contract["contract_id"],
+            goal="Apply the approved post-escalation revision",
+        )
+        _, revised_handoff = self.stage_reference(revised, session_id=session_id)
+
+        rolled_over = self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-3",
+                prompt=revised_handoff["prompt"],
+            )
+        )
+
+        self.assertIn(
+            "activated contract rollover-escalated-v1",
+            rolled_over["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+        )
+        self.assertEqual(self.state(session_id)["contract"], revised)
+        archives = list((self.data / "session-archive" / session_id).glob("*.json"))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual(json.loads(archives[0].read_text(encoding="utf-8")), prior)
+
+    def test_non_terminal_or_different_contract_cannot_replace_active_state(self) -> None:
+        session_id = "rollover-rejected"
+        contract = self.contract(contract_id="rollover-rejected-v1")
+        _, handoff = self.stage_reference(contract, session_id=session_id)
+        self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=handoff["prompt"],
+            )
+        )
+        original = self.state(session_id)
+        revised = self.contract(
+            contract_id=contract["contract_id"],
+            goal="Attempt to replace a non-terminal contract",
+        )
+        _, revised_handoff = self.stage_reference(revised, session_id=session_id)
+
+        non_terminal = self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-2",
+                prompt=revised_handoff["prompt"],
+            )
+        )
+        self.assertEqual(non_terminal["decision"], "block")  # type: ignore[index]
+        self.assertIn("non-terminal", non_terminal["reason"])  # type: ignore[index]
+        self.assertEqual(self.state(session_id), original)
+
+        different = self.contract(contract_id="different-v1")
+        different_prompt = f"{MARKER}\n{json.dumps(different)}"
+        different_result = self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-3",
+                prompt=different_prompt,
+            )
+        )
+        self.assertEqual(different_result["decision"], "block")  # type: ignore[index]
+        self.assertIn("different contract_id", different_result["reason"])  # type: ignore[index]
+        self.assertEqual(self.state(session_id), original)
+        self.assertFalse((self.data / "session-archive" / session_id).exists())
+
+    def test_terminal_marker_free_prompt_keeps_plan_and_write_tools_locked(self) -> None:
+        for terminal in ("complete", "escalated"):
+            with self.subTest(terminal=terminal):
+                data = self.root / f"plugin-data-terminal-{terminal}"
+                session_id = f"terminal-{terminal}"
+                contract = self.contract(contract_id=f"terminal-{terminal}-v1")
+                _, handoff = self.stage_reference(
+                    contract,
+                    session_id=session_id,
+                    plugin_data=data,
+                )
+                self.run_hook(
+                    self.event(
+                        session_id,
+                        "UserPromptSubmit",
+                        turn_id="turn-1",
+                        prompt=handoff["prompt"],
+                    ),
+                    plugin_data=data,
+                )
+                self.register(session_id, plugin_data=data)
+                if terminal == "complete":
+                    terminal_update = self.approved_plan(
+                        complete=True,
+                        explanation=(
+                            'execution_guard: {"acceptance_complete":["A1","A2"],'
+                            '"evidence":"Terminal fixture passed"}'
+                        ),
+                    )
+                else:
+                    terminal_update = self.approved_plan(
+                        explanation=(
+                            'execution_guard: {"escalation":{"reason":"Revision required",'
+                            '"evidence":"Terminal fixture escalated"}}'
+                        )
+                    )
+                self.apply_plan_update(
+                    session_id,
+                    terminal_update,
+                    plugin_data=data,
+                    tool_use_id=f"terminal-{terminal}",
+                )
+                prior = self.state(session_id, plugin_data=data)
+
+                marker_free = self.run_hook(
+                    self.event(
+                        session_id,
+                        "UserPromptSubmit",
+                        turn_id="turn-3",
+                        prompt="Continue with one more same-feature fix",
+                    ),
+                    plugin_data=data,
+                )
+                self.assertIn(
+                    "terminal and write-locked",
+                    marker_free["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+                )
+                self.assertEqual(self.state(session_id, plugin_data=data), prior)
+
+                guarded_tools = (
+                    ("update_plan", self.approved_plan(complete=True)),
+                    ("apply_patch", {"command": "*** Begin Patch"}),
+                    ("Edit", {"path": "tracked.txt"}),
+                    ("Write", {"path": "tracked.txt"}),
+                    ("Bash", {"command": "python3 -c 'print(1)'"}),
+                )
+                for index, (tool_name, tool_input) in enumerate(guarded_tools):
+                    with self.subTest(terminal=terminal, tool_name=tool_name):
+                        denied = self.run_hook(
+                            self.event(
+                                session_id,
+                                "PreToolUse",
+                                turn_id="turn-4",
+                                tool_name=tool_name,
+                                tool_use_id=f"terminal-lock-{terminal}-{index}",
+                                tool_input=tool_input,
+                            ),
+                            plugin_data=data,
+                        )
+                        self.assertEqual(
+                            denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+                            "deny",
+                        )
+                        self.assertIn(
+                            "terminal",
+                            denied["hookSpecificOutput"]["permissionDecisionReason"],  # type: ignore[index]
+                        )
+
+    def test_terminal_inline_rollover_is_rejected_after_ownership_closes(self) -> None:
+        for outcome in ("merged", "cancelled"):
+            with self.subTest(outcome=outcome):
+                data = self.root / f"plugin-data-inline-closed-{outcome}"
+                session_id = f"inline-closed-{outcome}"
+                contract = self.contract(contract_id=f"inline-closed-{outcome}-v1")
+                registry, handoff = self.stage_reference(
+                    contract,
+                    session_id=session_id,
+                    plugin_data=data,
+                )
+                self.run_hook(
+                    self.event(
+                        session_id,
+                        "UserPromptSubmit",
+                        turn_id="turn-1",
+                        prompt=handoff["prompt"],
+                    ),
+                    plugin_data=data,
+                )
+                self.register(session_id, plugin_data=data)
+                completion = self.approved_plan(
+                    complete=True,
+                    explanation=(
+                        'execution_guard: {"acceptance_complete":["A1","A2"],'
+                        '"evidence":"Initial contract complete"}'
+                    ),
+                )
+                self.apply_plan_update(
+                    session_id,
+                    completion,
+                    plugin_data=data,
+                    tool_use_id=f"complete-before-{outcome}",
+                )
+                prior = self.state(session_id, plugin_data=data)
+                closed = registry.close(
+                    contract["contract_id"],
+                    expected_baseline=self.head,
+                    outcome=outcome,
+                )
+                self.assertEqual(closed["status"], "closed")
+                revised = self.contract(
+                    contract_id=contract["contract_id"],
+                    goal="Attempt terminal continuation through inline V1",
+                )
+
+                denied = self.run_hook(
+                    self.event(
+                        session_id,
+                        "UserPromptSubmit",
+                        turn_id="turn-3",
+                        prompt=f"{MARKER}\n{json.dumps(revised)}",
+                    ),
+                    plugin_data=data,
+                )
+
+                self.assertEqual(denied["decision"], "block")  # type: ignore[index]
+                self.assertIn("private reference", denied["reason"])  # type: ignore[index]
+                self.assertEqual(self.state(session_id, plugin_data=data), prior)
+                self.assertFalse((data / "session-archive" / session_id).exists())
+
+    def test_rollover_session_write_failure_preserves_terminal_state_and_retries(self) -> None:
+        data = self.root / "plugin-data-rollover-write-failure"
+        session_id = "rollover-write-failure"
+        contract = self.contract(contract_id="rollover-write-failure-v1")
+        _, handoff = self.stage_reference(
+            contract,
+            session_id=session_id,
+            plugin_data=data,
+        )
+        self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=handoff["prompt"],
+            ),
+            plugin_data=data,
+        )
+        self.register(session_id, plugin_data=data)
+        completion = self.approved_plan(
+            complete=True,
+            explanation=(
+                'execution_guard: {"acceptance_complete":["A1","A2"],'
+                '"evidence":"Initial contract complete"}'
+            ),
+        )
+        self.apply_plan_update(
+            session_id,
+            completion,
+            plugin_data=data,
+            tool_use_id="complete-before-write-failure",
+        )
+        prior = self.state(session_id, plugin_data=data)
+        revised = self.contract(
+            contract_id=contract["contract_id"],
+            goal="Retry an atomically failed terminal rollover",
+        )
+        _, revised_handoff = self.stage_reference(
+            revised,
+            session_id=session_id,
+            plugin_data=data,
+        )
+        session_path = data / "sessions" / f"{session_id}.json"
+        real_atomic_write = execution.atomic_write
+
+        def fail_revised_session_write(path: Path, state: dict[str, Any]) -> None:
+            if path == session_path and state.get("contract") == revised:
+                raise OSError("simulated revised session write failure")
+            real_atomic_write(path, state)
+
+        original_stdin = execution.sys.stdin
+        original_stdout = execution.sys.stdout
+        original_plugin_data = os.environ.get("PLUGIN_DATA")
+        output = io.StringIO()
+        execution.atomic_write = fail_revised_session_write
+        execution.sys.stdin = io.StringIO(
+            json.dumps(
+                self.event(
+                    session_id,
+                    "UserPromptSubmit",
+                    turn_id="turn-3",
+                    prompt=revised_handoff["prompt"],
+                )
+            )
+        )
+        execution.sys.stdout = output
+        os.environ["PLUGIN_DATA"] = str(data)
+        try:
+            self.assertEqual(execution.main(), 0)
+        finally:
+            execution.atomic_write = real_atomic_write
+            execution.sys.stdin = original_stdin
+            execution.sys.stdout = original_stdout
+            if original_plugin_data is None:
+                os.environ.pop("PLUGIN_DATA", None)
+            else:
+                os.environ["PLUGIN_DATA"] = original_plugin_data
+
+        failed = json.loads(output.getvalue())
+        self.assertEqual(failed["decision"], "block")
+        self.assertIn("prior terminal state remains active", failed["reason"])
+        self.assertEqual(self.state(session_id, plugin_data=data), prior)
+        archives = list((data / "session-archive" / session_id).glob("*.json"))
+        self.assertEqual(len(archives), 1)
+
+        frozen_state = session_path.read_bytes()
+        runtime_only = self.repo / "runtime-only.txt"
+        runtime_only.write_text("live git context\n", encoding="utf-8")
+        resumed = self.run_hook(
+            self.event(
+                session_id,
+                "SessionStart",
+                source="resume",
+                permission_mode="default",
+            ),
+            plugin_data=data,
+        )
+        self.assertIn(
+            "runtime-only.txt",
+            resumed["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+        )
+        self.assertEqual(session_path.read_bytes(), frozen_state)
+        runtime_only.unlink()
+
+        write_denied = self.run_hook(
+            self.event(
+                session_id,
+                "PreToolUse",
+                turn_id="turn-4",
+                tool_name="apply_patch",
+                tool_use_id="write-after-rollover-failure",
+                tool_input={"command": "*** Begin Patch"},
+            ),
+            plugin_data=data,
+        )
+        self.assertEqual(
+            write_denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+            "deny",
+        )
+        self.assertIn(
+            "terminal",
+            write_denied["hookSpecificOutput"]["permissionDecisionReason"],  # type: ignore[index]
+        )
+
+        retried = self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-5",
+                prompt=revised_handoff["prompt"],
+            ),
+            plugin_data=data,
+        )
+        self.assertIn(
+            "activated contract rollover-write-failure-v1",
+            retried["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+        )
+        self.assertEqual(self.state(session_id, plugin_data=data)["contract"], revised)
+        self.assertEqual(
+            len(list((data / "session-archive" / session_id).glob("*.json"))),
+            1,
+        )
+
+    def test_terminal_recovery_and_read_only_bash_do_not_rewrite_persisted_state(self) -> None:
+        data = self.root / "plugin-data-terminal-read-only"
+        session_id = "terminal-read-only"
+        contract = self.contract(contract_id="terminal-read-only-v1")
+        _, handoff = self.stage_reference(
+            contract,
+            session_id=session_id,
+            plugin_data=data,
+        )
+        self.run_hook(
+            self.event(
+                session_id,
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=handoff["prompt"],
+            ),
+            plugin_data=data,
+        )
+        self.register(session_id, plugin_data=data)
+        completion = self.approved_plan(
+            complete=True,
+            explanation=(
+                'execution_guard: {"acceptance_complete":["A1","A2"],'
+                '"evidence":"Terminal read-only fixture passed"}'
+            ),
+        )
+        self.apply_plan_update(
+            session_id,
+            completion,
+            plugin_data=data,
+            tool_use_id="complete-before-read-only-events",
+        )
+        session_path = data / "sessions" / f"{session_id}.json"
+        frozen_state = session_path.read_bytes()
+
+        self.assertIsNone(
+            self.run_hook(
+                self.event(session_id, "PreCompact", turn_id="turn-3", trigger="auto"),
+                plugin_data=data,
+            )
+        )
+        self.assertEqual(session_path.read_bytes(), frozen_state)
+
+        read_only = {"command": "git status --porcelain=v1"}
+        self.assertIsNone(
+            self.run_hook(
+                self.event(
+                    session_id,
+                    "PreToolUse",
+                    turn_id="turn-3",
+                    tool_name="Bash",
+                    tool_use_id="terminal-read-only-bash",
+                    tool_input=read_only,
+                ),
+                plugin_data=data,
+            )
+        )
+        self.assertIsNone(
+            self.run_hook(
+                self.event(
+                    session_id,
+                    "PostToolUse",
+                    turn_id="turn-3",
+                    tool_name="Bash",
+                    tool_use_id="terminal-read-only-bash",
+                    tool_input=read_only,
+                    tool_response={"exit_code": 0},
+                ),
+                plugin_data=data,
+            )
+        )
+        self.assertEqual(session_path.read_bytes(), frozen_state)
 
     def test_malformed_native_delegation_envelope_fails_closed(self) -> None:
         data = self.root / "plugin-data-envelope-malformed"

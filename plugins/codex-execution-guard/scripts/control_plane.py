@@ -58,8 +58,20 @@ MUTABLE_FIELDS = {
     "baseline",
 }
 GIT_HEAD_PATTERN = re.compile(r"^[0-9a-fA-F]{40}(?:[0-9a-fA-F]{24})?$")
-SAME_ITERATION_RELATIONS = {"same-contract", "fix", "adjustment", "test", "documentation"}
-NEW_ITERATION_RELATIONS = {"independent-value", "new-acceptance"}
+SAME_ITERATION_RELATIONS = {
+    "same-contract",
+    "fix",
+    "adjustment",
+    "test",
+    "documentation",
+    "new-acceptance",
+    "acceptance-detail",
+    "retry",
+    "optimization",
+    "failed-acceptance-fix",
+}
+NEW_ITERATION_RELATIONS = {"independent-value"}
+OWNERSHIP_CLOSE_OUTCOMES = {"merged", "cancelled"}
 TASK_SHAPE_CANDIDATES = {
     "mechanical": (
         "gpt-5.6-luna/max",
@@ -91,14 +103,12 @@ def decide_task(relation: str, iteration_status: str) -> str:
     iteration_status = require_string(iteration_status, "iteration_status")
     if relation == "ambiguous":
         return "stop"
-    if iteration_status in {CLOSED, "merged"}:
-        return "create"
     if relation in NEW_ITERATION_RELATIONS:
         return "create"
     if relation in SAME_ITERATION_RELATIONS:
         if iteration_status == ACTIVE:
             return "reuse"
-        if iteration_status == "missing":
+        if iteration_status in {CLOSED, *OWNERSHIP_CLOSE_OUTCOMES, "missing"}:
             return "create"
     return "stop"
 
@@ -631,7 +641,20 @@ class IterationRegistry:
             atomic_write(self.path, registry)
             return normalized
 
-    def close(self, iteration_id: str, *, expected_baseline: str) -> dict[str, str]:
+    def close(
+        self,
+        iteration_id: str,
+        *,
+        expected_baseline: str,
+        outcome: str,
+    ) -> dict[str, str]:
+        outcome = require_string(outcome, "outcome")
+        if outcome not in OWNERSHIP_CLOSE_OUTCOMES:
+            raise ControlPlaneError(
+                "Ownership closes only after the feature chain is merged or cancelled; "
+                "completion receipts, acceptance failures, escalations, and phase closeout "
+                "must keep the iteration active."
+            )
         with registry_lock(self.path):
             iteration_id = require_string(iteration_id, "iteration_id")
             expected_baseline = require_string(expected_baseline, "expected_baseline").lower()
@@ -753,9 +776,13 @@ def build_parser() -> argparse.ArgumentParser:
     update.add_argument("--expected-baseline", required=True)
     add_identity_arguments(update, optional=True)
 
-    close = commands.add_parser("close", help="Close a record after baseline comparison.")
+    close = commands.add_parser(
+        "close",
+        help="Close ownership only after an explicit merged or cancelled outcome.",
+    )
     close.add_argument("--iteration", required=True)
     close.add_argument("--expected-baseline", required=True)
+    close.add_argument("--outcome", required=True, choices=sorted(OWNERSHIP_CLOSE_OUTCOMES))
     return parser
 
 
@@ -810,7 +837,11 @@ def execute(args: argparse.Namespace) -> dict[str, Any]:
     if args.command == "reuse":
         return registry.reuse(args.iteration)
     if args.command == "close":
-        return registry.close(args.iteration, expected_baseline=args.expected_baseline)
+        return registry.close(
+            args.iteration,
+            expected_baseline=args.expected_baseline,
+            outcome=args.outcome,
+        )
     if args.command == "update":
         changes = {
             field: getattr(args, field)

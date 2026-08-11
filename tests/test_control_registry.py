@@ -242,12 +242,47 @@ class ControlRegistryTests(unittest.TestCase):
         )
         self.assertEqual(updated["title"], "Renamed iteration")
         self.assertEqual(updated["baseline"], self.head_b)
-        closed = self.registry.close("feature-v1", expected_baseline=self.head_b)
+        closed = self.registry.close(
+            "feature-v1",
+            expected_baseline=self.head_b,
+            outcome="merged",
+        )
         self.assertEqual(closed["status"], "closed")
-        self.assertEqual(closed, self.registry.close("feature-v1", expected_baseline=self.head_b))
+        self.assertEqual(
+            closed,
+            self.registry.close(
+                "feature-v1",
+                expected_baseline=self.head_b,
+                outcome="merged",
+            ),
+        )
         with self.assertRaisesRegex(control.ControlPlaneError, "cannot be reused"):
             self.registry.reuse("feature-v1")
         self.assertFalse(list(self.path.parent.glob(".*.tmp")))
+
+    def test_close_requires_merged_or_cancelled_feature_outcome(self) -> None:
+        active = self.registry.create(self.record())
+        for outcome in (
+            "completion-receipt",
+            "acceptance-failure",
+            "escalated",
+            "phase-closeout",
+        ):
+            with self.subTest(outcome=outcome):
+                with self.assertRaisesRegex(control.ControlPlaneError, "merged or cancelled"):
+                    self.registry.close(
+                        "feature-v1",
+                        expected_baseline=self.head_a,
+                        outcome=outcome,
+                    )
+                self.assertEqual(self.registry.read("feature-v1"), active)
+
+        cancelled = self.registry.close(
+            "feature-v1",
+            expected_baseline=self.head_a,
+            outcome="cancelled",
+        )
+        self.assertEqual(cancelled["status"], "closed")
 
     def test_duplicate_iteration_and_ownership_are_rejected(self) -> None:
         original = self.registry.create(self.record())
@@ -422,7 +457,11 @@ class ControlRegistryTests(unittest.TestCase):
                 changes={"title": "must not apply"},
             )
         with self.assertRaisesRegex(control.ControlPlaneError, "claimed, not active"):
-            self.registry.close("feature-v1", expected_baseline=self.head_a)
+            self.registry.close(
+                "feature-v1",
+                expected_baseline=self.head_a,
+                outcome="cancelled",
+            )
 
         self.assertEqual(self.registry.read("feature-v1")["status"], "claimed")
 
@@ -543,13 +582,20 @@ class ControlRegistryTests(unittest.TestCase):
             ("adjustment", "active"): "reuse",
             ("test", "active"): "reuse",
             ("documentation", "active"): "reuse",
+            ("new-acceptance", "active"): "reuse",
+            ("acceptance-detail", "active"): "reuse",
+            ("retry", "active"): "reuse",
+            ("optimization", "active"): "reuse",
+            ("failed-acceptance-fix", "active"): "reuse",
             ("same-contract", "closed"): "create",
             ("same-contract", "merged"): "create",
+            ("same-contract", "cancelled"): "create",
             ("same-contract", "missing"): "create",
             ("independent-value", "active"): "create",
-            ("new-acceptance", "active"): "create",
             ("ambiguous", "active"): "stop",
+            ("ambiguous", "closed"): "stop",
             ("unknown", "active"): "stop",
+            ("unknown", "closed"): "stop",
         }
         for evidence, expected in cases.items():
             with self.subTest(evidence=evidence):

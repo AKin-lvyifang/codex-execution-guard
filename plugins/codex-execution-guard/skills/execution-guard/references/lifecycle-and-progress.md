@@ -34,6 +34,14 @@ execution_guard: {"escalation":{"reason":"A required scope decision is missing",
 
 Both fields are required. Escalation is not completion: the receipt retains incomplete plan and acceptance IDs and makes no success claim.
 
+## Terminal revision
+
+Completion and escalation end one contract, not the feature-chain ownership. They also lock `update_plan` and every write tool; ordinary marker-free prompts do not change that state. Control may send revised contract content back to the same task only through a private short reference with the same active `contract_id`, worktree, and branch and a freshly verified baseline. Inline V1 is first-activation compatibility, not a terminal continuation path.
+
+The Hook content-addresses the prior terminal state under private `PLUGIN_DATA`, then atomically installs the incoming plan and acceptance arrays. If the session-state write fails after archival, `UserPromptSubmit` blocks, the old terminal state remains authoritative and write-locked, and retrying the same reference reuses the one archive. After success, baseline verification and exact plan registration are required again before writes. A non-terminal state, closed ownership, or different identity fails closed without replacing current state.
+
+Keep fixes and optimizations on the deterministic implementation iteration ID frozen for the feature-chain key. If acceptance truly requires an independent environment or responsibility, freeze one deterministic acceptance iteration ID and claim that exact ID on every recheck, producing reuse or `reconcile_only` rather than `acceptance-v2` or `acceptance-v3`. Later acceptance failures send code changes back to implementation. This is an orchestration policy; the registry schema does not encode feature-chain keys or enforce lane counts, and no schema migration is required.
+
 ## Evidence budget
 
 - Record a validation command once with its outcome, current Git HEAD, changed paths, current step, and acceptance state.
@@ -49,7 +57,7 @@ Fixture output proves that the plugin source does not truncate these fields. A h
 
 ## Stop and receipt
 
-`Stop` uses `decision: "block"` only while approved work remains incomplete without a registered escalation. Once all items are complete, or an evidence-backed escalation is registered, it returns no block decision and allows delivery to the control task.
+`Stop` uses `decision: "block"` only while approved work remains incomplete without a registered escalation. Once all items are complete, or an evidence-backed escalation is registered, it returns no block decision and allows delivery to the control task. This delivery is not ownership closure.
 
 For completed work, deliver:
 
@@ -67,3 +75,5 @@ Execution receipt
 ```
 
 Hooks cannot guarantee coverage of every tool path. Report fixture validation separately from a real fresh-session install, Hook trust review, and host discovery check.
+
+Control keeps registry ownership active after a completion receipt, acceptance failure, escalation, or phase closeout. Only an explicit merged or cancelled outcome closes the feature chain.

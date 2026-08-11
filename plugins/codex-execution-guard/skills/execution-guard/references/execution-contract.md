@@ -25,7 +25,7 @@ Codex native task messaging may wrap that prompt in one `<codex_delegation>` env
 
 The Hook accepts the reference only when its format, size, SHA-256, contract ID, target session, active V2 ownership, and Git baseline all match before session state is created. A prompt containing both a reference and inline JSON is ambiguous and fails closed.
 
-Inline V1 JSON remains compatible. Use it by default only for the labeled folded-inline cross-host fallback when control cannot write target `PLUGIN_DATA`; do not silently fall back after a missing, malformed, oversized, or tampered same-host artifact.
+Inline V1 JSON remains compatible for first activation. Use it by default only for the labeled folded-inline cross-host fallback when control cannot write target `PLUGIN_DATA`; do not silently fall back after a missing, malformed, oversized, or tampered same-host artifact. Inline V1 cannot replace completed or escalated session state: terminal revision requires a private reference so active V2 ownership is revalidated.
 
 ## Two-stage handoff
 
@@ -36,7 +36,7 @@ When the control task does not yet know the real execution task, worktree, branc
 3. Reconcile native state without retrying create. Continue only after exactly one real `threadId` and one verified environment report can atomically finalize the claim to active ownership.
 4. Compile `baseline`. On the same host, stage the complete canonical contract privately and send the marker plus short reference. Use the labeled folded-inline fallback only when target `PLUGIN_DATA` is unavailable across hosts.
 
-If the current task is already the intended worktree with confirmed active ownership, branch, and `HEAD`, skip bootstrap and stage the complete contract directly. Never send a contract with a `clientThreadId` or guessed baseline values.
+If the current task is already the intended worktree with confirmed active ownership, branch, and `HEAD`, skip bootstrap and stage the complete contract directly. This includes implementation, optimization, failed-acceptance repair, and revalidation for the same feature chain; ordinary follow-up does not create a new task. Never send a contract with a `clientThreadId` or guessed baseline values.
 
 The object must contain:
 
@@ -88,7 +88,10 @@ Referenced contract IDs use 1–128 ASCII letters, digits, dots, underscores, or
 - Include a concrete Git baseline for an execution-role contract.
 - Include only models and reasoning levels the user authorized.
 - Treat missing material decisions as a reason to keep planning in the control task, not as executor discretion.
+- Bind each lane's `contract_id` to the exact deterministic iteration ID frozen for the feature chain. Revisions and rechecks keep that ID; do not mint retry- or version-suffixed contract IDs.
 
 ## Change boundary
 
 The executor may change plan status and add a concise implementation note. It must not change step text, reorder or omit steps, add IDs, widen paths, weaken acceptance, or authorize a new model or external action. A material change returns to the control task.
+
+Control may send revised contract content to the same task after the prior contract is complete or escalated. Until then, marker-free prompts leave terminal state locked and neither `update_plan` nor write tools may run. The revision must arrive through a private short reference, keep the same `contract_id`, worktree, and branch, and carry a baseline verified against active V2 ownership and current clean Git state. The Hook archives the prior terminal session state under private `PLUGIN_DATA` by content hash before atomically initializing the revised plan. If session-state replacement fails, it blocks the prompt, preserves the old terminal state, and reuses the same archive on retry. It rejects inline rollover, closed or changed ownership, a non-terminal prior state, or differing identity and baseline.
