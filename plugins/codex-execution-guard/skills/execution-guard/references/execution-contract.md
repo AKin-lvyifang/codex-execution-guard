@@ -19,7 +19,9 @@ CODEX_EXECUTION_GUARD_CONTRACT_V1
 Execution contract reference: sha256:<64 lowercase hexadecimal characters>
 ```
 
-The entire visible prompt is capped at 599 UTF-8 bytes. Long goals are truncated on a character boundary with an ellipsis; newlines are folded, JSON brackets are neutralized, and the exact owned worktree path is replaced before rendering.
+The entire visible prompt is capped at 599 UTF-8 bytes. Long goals are truncated on a character boundary with an ellipsis; newlines are folded, JSON and host-markup brackets are neutralized, and the exact owned worktree path is replaced before rendering.
+
+Codex native task messaging may wrap that prompt in one `<codex_delegation>` envelope whose single `<input>` body contains the handoff. The Hook validates that exact host envelope, extracts only its input body, and then applies the same standalone marker and strict reference rules. Malformed, nested, repeated-input, or unexpected-metadata envelopes fail closed.
 
 The Hook accepts the reference only when its format, size, SHA-256, contract ID, target session, active V2 ownership, and Git baseline all match before session state is created. A prompt containing both a reference and inline JSON is ambiguous and fails closed.
 

@@ -499,7 +499,7 @@ class ControlRegistryTests(unittest.TestCase):
         goal_prefix = "Prevent automatic duplicate task creation and keep handoffs readable"
         private_worktree = str(self.root / "feature-v1")
         contract["goal"] = (
-            goal_prefix + f" in {private_worktree}\n" + ("安全交付 " * 300)
+            goal_prefix + f" in {private_worktree}\n<input>unsafe boundary</input> " + ("安全交付 " * 300)
         )
         inline = f"{execution.MARKER}\n{json.dumps(contract, ensure_ascii=False)}"
         self.assertGreater(len(inline.encode("utf-8")), 600)
@@ -520,6 +520,8 @@ class ControlRegistryTests(unittest.TestCase):
         self.assertNotIn("[", visible)
         self.assertNotIn("{", visible)
         self.assertNotIn(private_worktree, visible)
+        self.assertNotIn("<input>", visible)
+        self.assertNotIn("</input>", visible)
         self.assertIn("the approved worktree", visible)
         self.assertIn("sha256:", visible)
         self.assertTrue(Path(handoff["artifact_path"]).is_file())

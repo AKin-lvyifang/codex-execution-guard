@@ -325,19 +325,46 @@ class LifecycleFixtureTests(unittest.TestCase):
             ),
             with_plugin_data=False,
         )
+        delegated_contract = (
+            "<codex_delegation>\n"
+            "  <source_thread_id>control-task</source_thread_id>\n"
+            f"  <input>{contract_prompt}</input>\n"
+            "</codex_delegation>"
+        )
+        delegated_activation = self.run_hook(
+            self.event(
+                "guarded-no-data-delegated",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=delegated_contract,
+            ),
+            with_plugin_data=False,
+        )
         self.assertIsNone(prompt)
         self.assertIsNone(write)
         self.assertIsNone(stop)
         self.assertEqual(activation["decision"], "block")  # type: ignore[index]
         self.assertIn("PLUGIN_DATA", activation["reason"])  # type: ignore[index]
+        self.assertEqual(delegated_activation["decision"], "block")  # type: ignore[index]
+        self.assertIn("PLUGIN_DATA", delegated_activation["reason"])  # type: ignore[index]
 
     def test_inline_marker_text_is_inert(self) -> None:
         prompt = f"Please explain {MARKER} {{not a contract}}"
         result = self.run_hook(
             self.event("inline", "UserPromptSubmit", turn_id="turn-1", prompt=prompt)
         )
+        tag_like = self.run_hook(
+            self.event(
+                "inline-tag-like",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=f"<input>{MARKER}\n{{not a contract}}</input>",
+            )
+        )
         self.assertIsNone(result)
+        self.assertIsNone(tag_like)
         self.assertFalse((self.data / "sessions" / "inline.json").exists())
+        self.assertFalse((self.data / "sessions" / "inline-tag-like.json").exists())
 
     def test_reference_activation_and_resume_preserve_exact_untruncated_contract(self) -> None:
         tail_decision = "DECISION_TAIL_SENTINEL"
@@ -392,6 +419,109 @@ class LifecycleFixtureTests(unittest.TestCase):
         self.assertIn(tail_decision, restore_context)
         self.assertIn(tail_step, restore_context)
         self.assertIn(tail_acceptance, restore_context)
+
+    def test_native_delegation_envelope_preserves_private_reference(self) -> None:
+        contract = self.contract(contract_id="native-envelope-v1")
+        _, handoff = self.stage_reference(contract, session_id="native-task")
+        delegated = (
+            "<codex_delegation>\n"
+            "  <source_thread_id>control-task</source_thread_id>\n"
+            f"  <input>{handoff['prompt']}</input>\n"
+            "</codex_delegation>"
+        )
+
+        activated = self.run_hook(
+            self.event(
+                "native-task",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=delegated,
+            )
+        )
+
+        self.assertIn(
+            "activated contract native-envelope-v1",
+            activated["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+        )
+        self.assertEqual(self.state("native-task")["contract"], contract)
+
+        inline_contract = self.contract(contract_id="native-envelope-inline-v1")
+        inline = (
+            "<codex_delegation>\n"
+            "  <source_thread_id>control-task</source_thread_id>\n"
+            f"  <input>{MARKER}\n{json.dumps(inline_contract)}</input>\n"
+            "</codex_delegation>"
+        )
+        inline_activated = self.run_hook(
+            self.event(
+                "native-inline-task",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=inline,
+            )
+        )
+        self.assertIn(
+            "activated contract native-envelope-inline-v1",
+            inline_activated["hookSpecificOutput"]["additionalContext"],  # type: ignore[index]
+        )
+        self.assertEqual(self.state("native-inline-task")["contract"], inline_contract)
+
+    def test_malformed_native_delegation_envelope_fails_closed(self) -> None:
+        data = self.root / "plugin-data-envelope-malformed"
+        contract = self.contract(contract_id="native-envelope-malformed-v1")
+        _, handoff = self.stage_reference(
+            contract,
+            session_id="native-envelope-malformed",
+            plugin_data=data,
+        )
+        valid = (
+            "<codex_delegation>\n"
+            "  <source_thread_id>control-task</source_thread_id>\n"
+            f"  <input>{handoff['prompt']}</input>\n"
+            "</codex_delegation>"
+        )
+        input_open = "<input>"
+        cases = {
+            "unexpected-metadata": valid.replace(
+                "  <input>",
+                "  <unexpected>metadata</unexpected>\n  <input>",
+            ),
+            "nested": valid.replace(input_open, input_open + "<codex_delegation>", 1),
+            "repeated-input": valid.replace(input_open, input_open + input_open, 1),
+            "trailing": valid + "junk",
+            "reference-suffix": valid.replace("</input>", "junk</input>", 1),
+        }
+        for case, delegated in cases.items():
+            with self.subTest(case=case):
+                denied = self.run_hook(
+                    self.event(
+                        "native-envelope-malformed",
+                        "UserPromptSubmit",
+                        turn_id="turn-1",
+                        prompt=delegated,
+                    ),
+                    plugin_data=data,
+                )
+                self.assertEqual(denied["decision"], "block")  # type: ignore[index]
+                self.assertFalse(
+                    (data / "sessions" / "native-envelope-malformed.json").exists()
+                )
+
+        marker_free = cases["unexpected-metadata"].replace(
+            handoff["prompt"],
+            "Please inspect the typo",
+        )
+        inert = self.run_hook(
+            self.event(
+                "native-envelope-marker-free",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=marker_free,
+            ),
+            plugin_data=data,
+        )
+        self.assertIsNone(inert)
+        self.assertFalse((data / "sessions" / "native-envelope-marker-free.json").exists())
 
     def test_reference_rejects_missing_oversized_tampered_and_ambiguous_artifacts(self) -> None:
         cases = ("missing", "oversized", "tampered", "ambiguous")
@@ -487,6 +617,24 @@ class LifecycleFixtureTests(unittest.TestCase):
         )
         self.assertEqual(denied["decision"], "block")  # type: ignore[index]
         self.assertFalse((self.data / "sessions" / "malformed-reference.json").exists())
+
+        delegated_marker_only = (
+            "<codex_delegation>\n"
+            "  <source_thread_id>control-task</source_thread_id>\n"
+            f"  <input>{MARKER}</input>\n"
+            "</codex_delegation>"
+        )
+        marker_only = self.run_hook(
+            self.event(
+                "delegated-marker-only",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=delegated_marker_only,
+            )
+        )
+        self.assertEqual(marker_only["decision"], "block")  # type: ignore[index]
+        self.assertIn("must be followed", marker_only["reason"])  # type: ignore[index]
+        self.assertFalse((self.data / "sessions" / "delegated-marker-only.json").exists())
 
         inline = self.activate("inline-v1-compatible")
         self.assertEqual(self.state("inline-v1-compatible")["contract"], inline)

@@ -196,7 +196,9 @@ def single_line_goal(goal: str) -> str:
     flattened = " ".join(printable.split())
     if not flattened:
         raise ContractProtocolError("Contract goal has no printable single-line summary.")
-    return flattened.translate(str.maketrans({"{": "(", "}": ")", "[": "(", "]": ")"}))
+    return flattened.translate(
+        str.maketrans({"{": "(", "}": ")", "[": "(", "]": ")", "<": "(", ">": ")"})
+    )
 
 
 def render_reference_prompt(contract_id: str, digest: str, goal: str) -> str:

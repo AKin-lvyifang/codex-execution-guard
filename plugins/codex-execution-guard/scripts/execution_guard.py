@@ -22,6 +22,15 @@ from contract_protocol import (
 )
 
 MARKER_PATTERN = re.compile(rf"(?m)^{re.escape(MARKER)}\r?$")
+DELEGATION_OPEN = "<codex_delegation>"
+DELEGATION_CLOSE = "</codex_delegation>"
+INPUT_OPEN = "<input>"
+INPUT_CLOSE = "</input>"
+SOURCE_THREAD_PATTERN = re.compile(r"<source_thread_id>[^<\r\n]+</source_thread_id>")
+SOURCE_HOST_PATTERN = re.compile(r"<source_host_id>[^<\r\n]+</source_host_id>")
+DELEGATED_MARKER_PATTERN = re.compile(
+    rf"{re.escape(INPUT_OPEN)}{re.escape(MARKER)}(?=\r?\n|\r?{re.escape(INPUT_CLOSE)}|$)"
+)
 STATE_VERSION = 1
 VALID_STATUSES = {"pending", "in_progress", "completed"}
 CONTROL_PREFIX = "execution_guard:"
@@ -137,15 +146,59 @@ def contract_marker(prompt: str) -> re.Match[str] | None:
     return MARKER_PATTERN.search(prompt)
 
 
+def contract_prompt_has_marker(prompt: str) -> bool:
+    if contract_marker(prompt) is not None:
+        return True
+    stripped = prompt.strip()
+    return (
+        stripped.startswith(DELEGATION_OPEN)
+        and DELEGATED_MARKER_PATTERN.search(stripped) is not None
+    )
+
+
+def contract_prompt_body(prompt: str) -> str:
+    stripped = prompt.strip()
+    if not stripped.startswith(DELEGATION_OPEN):
+        return prompt
+    if not stripped.endswith(DELEGATION_CLOSE):
+        raise GuardError("Codex delegation envelope is malformed.")
+    if stripped.count(DELEGATION_OPEN) != 1 or stripped.count(DELEGATION_CLOSE) != 1:
+        raise GuardError("Codex delegation envelope cannot be nested or repeated.")
+    enclosed = stripped[len(DELEGATION_OPEN) : -len(DELEGATION_CLOSE)]
+    if enclosed.count(INPUT_OPEN) != 1 or enclosed.count(INPUT_CLOSE) != 1:
+        raise GuardError("Codex delegation envelope must contain exactly one input body.")
+    input_start = enclosed.index(INPUT_OPEN)
+    input_end = enclosed.index(INPUT_CLOSE)
+    if input_end < input_start:
+        raise GuardError("Codex delegation envelope has an invalid input boundary.")
+    header = enclosed[:input_start]
+    trailer = enclosed[input_end + len(INPUT_CLOSE) :]
+    if trailer.strip():
+        raise GuardError("Codex delegation envelope contains unexpected trailing content.")
+    header_lines = [line.strip() for line in header.splitlines() if line.strip()]
+    thread_lines = [line for line in header_lines if SOURCE_THREAD_PATTERN.fullmatch(line)]
+    host_lines = [line for line in header_lines if SOURCE_HOST_PATTERN.fullmatch(line)]
+    if (
+        len(thread_lines) != 1
+        or len(host_lines) > 1
+        or len(header_lines) != len(thread_lines) + len(host_lines)
+    ):
+        raise GuardError("Codex delegation envelope has invalid source metadata.")
+    return enclosed[input_start + len(INPUT_OPEN) : input_end]
+
+
 def parse_contract(
     prompt: str,
     *,
     event: dict[str, Any] | None = None,
     data_root: Path | None = None,
 ) -> dict[str, Any] | None:
+    if not contract_prompt_has_marker(prompt):
+        return None
+    prompt = contract_prompt_body(prompt)
     marker = contract_marker(prompt)
     if marker is None:
-        return None
+        raise GuardError("Execution contract marker must be inside the delegation input body.")
     try:
         digest = reference_digest(prompt, marker_end=marker.end())
     except ContractProtocolError as exc:
@@ -736,7 +789,11 @@ def main() -> int:
         path = state_path(event)
         if path is None:
             prompt = event.get("prompt")
-            if event_name == "UserPromptSubmit" and isinstance(prompt, str) and contract_marker(prompt):
+            if (
+                event_name == "UserPromptSubmit"
+                and isinstance(prompt, str)
+                and contract_prompt_has_marker(prompt)
+            ):
                 parse_contract(prompt)
                 emit(
                     {
