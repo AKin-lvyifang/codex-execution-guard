@@ -15,6 +15,8 @@ Long Codex implementation sessions often fail because execution boundaries are l
 - A high-reasoning model can spend the task on theoretical risks, extra integrity checks, and future hardening before delivering the requested feature.
 - Multiple tasks can share a checkout or branch and overwrite one another's work.
 - A detailed handoff can be compressed into a weak summary that loses steps, non-goals, and acceptance criteria.
+- A complete contract can appear as oversized JSON in visible chat and bury the human-readable handoff.
+- `create_thread` can report an error or timeout after the host already created a task; an automatic retry then creates duplicate tasks and worktrees.
 - An executor can invent new tasks, tests, or exit gates and keep spending without producing new delivery evidence.
 
 Execution Guard turns one approved iteration into a recoverable execution contract: one execution task, one worktree, one feature branch, stable plan steps, and an evidence-based receipt.
@@ -67,7 +69,7 @@ Freeze product decisions, scope, steps, and acceptance criteria with a planning-
 The plan is approved. Start implementation with $execution-guard.
 ```
 
-Control decides whether to create or reuse a task, chooses an execution model, obtains the real worktree and Git baseline, and sends a compact execution contract to the executor.
+Control decides whether to create or reuse a task, chooses an execution model, obtains the real worktree and Git baseline, stages the complete contract privately, and sends only its short reference to the executor.
 
 See the [full usage guide](docs/USAGE.en.md) for installation, operation, updating, and troubleshooting.
 
@@ -78,39 +80,43 @@ flowchart TD
     A[Plan and approve in the control task] --> B[Invoke execution-guard]
     B --> C{Create or reuse}
     C --> D[Select an available authorized model]
-    D --> E[Create or resolve the real worktree task]
-    E --> F[Verify threadId branch HEAD and status]
-    F --> G[Send the versioned execution contract]
-    G --> H[Register the complete update_plan]
+    D --> E[Atomically claim before creation]
+    E --> F[Create once or reconcile only]
+    F --> G[Verify threadId branch HEAD and status]
+    G --> X[Stage the contract privately and send a short reference]
+    X --> H[Register the complete update_plan]
     H --> I[Implement and validate within budget]
     I --> J[Recover contract and progress after compaction]
     J --> K[Return local commits and an acceptance receipt]
 ```
 
-The control task sends only the goal, scope, frozen decisions, non-goals, plan, acceptance, Git baseline, and authorization boundaries. It does not copy the full planning transcript into the execution task.
+Control compiles the goal, scope, frozen decisions, non-goals, plan, acceptance, Git baseline, and authorization boundaries into private canonical JSON. On the same host, visible chat carries only natural language and a short SHA-256 reference, not the full contract or planning transcript.
 
 ## Architecture
 
 | Layer | Responsibility |
 | --- | --- |
 | `AGENTS.md` trigger | Defines when the plugin is mandatory without embedding the orchestration protocol in the global prompt. |
-| Control Skill | Decides create versus reuse, inspects host capabilities, selects a model, calls native Codex task tools, and obtains the real Git baseline. |
+| Control Skill | Decides create versus reuse, claims before creation, creates once or reconciles, selects a model, verifies Git, and stages the private handoff. |
 | Execution Skill | Compiles and executes a versioned contract, registers a stable `update_plan`, implements locally, validates, and returns evidence. |
 | Hooks | Guard marked execution sessions before writes, at plan updates, during compaction and resume, and at task stop. |
-| Local state helpers | Atomically persist iteration ownership and execution progress without MCP, a server, a database, or an account system. |
+| Local state helpers | Persist one-shot creation claims, atomic ownership, private contract artifacts, and execution progress without MCP, a server, a database, or an account system. |
 
 Read [Architecture and principles](docs/ARCHITECTURE.en.md) for the full design.
 
 ## Main capabilities
 
 - Create or reuse based on the same goal, scope, and acceptance criteria.
+- Persist a locked one-shot claim before `create_thread`; an error, timeout, crash, reload, or queued `clientThreadId` never grants another create call.
+- Reconcile every later claim and finalize only from exactly one real task with a complete Git identity; zero or multiple candidates stop.
 - Wait for a real `threadId`; never activate execution from a queued `clientThreadId`.
+- Keep the complete same-host contract in private `PLUGIN_DATA`; visible chat shows a UTF-8-bounded single-line task goal and short reference, and the Hook verifies size, digest, contract ID, session, active ownership, and Git baseline before state creation.
 - Verify the worktree, branch, full `HEAD`, and Git status before implementation.
 - Select only from host-advertised and user-authorized model profiles, while separating requested and verified runtime identity.
 - Require the executor to register the complete approved plan with stable IDs before covered writes.
 - Admit only the current deliverable, an observed failure, an acceptance item, or a direct blocker into current work.
 - Treat repeated validation on unchanged code and acceptance state as duplicate evidence, not progress.
-- Restore the contract, current step, Git identity, and evidence after compaction or resume.
+- Restore every contract boundary, the exact plan and acceptance arrays, Git identity, and evidence after compaction or resume without source-level truncation.
 - Block premature completion and return a receipt with local commits, changed paths, validation, deviations, and unverified items.
 
 ## Who it is for
@@ -129,6 +135,7 @@ It is not a replacement for a multi-user project-management system, a hardened e
 - Model discovery and actual-model verification depend on capabilities exposed by the current Codex host.
 - Execution is local-only by default. The plugin never infers permission to push, open a PR, run remote CI, tag, release, or deploy.
 - Fixture tests do not prove that a particular host reloaded the marketplace, discovered the Skill, or trusted the current Hooks.
+- SHA-256 identifies and verifies the private contract artifact. It cannot guarantee that one host tool call never duplicates its own internal side effect.
 
 ## Documentation
 
@@ -151,7 +158,7 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py \
   plugins/codex-execution-guard
 ```
 
-The current fixtures cover ownership, concurrent registry mutation, Git baseline checks, plan registration, compaction recovery, evidence deduplication, and completion decisions. Fresh-host installation and Hook trust remain explicit manual checks.
+The current fixtures cover one-shot creation claims, concurrency and reconcile-only recovery, V1 registry migration, private contract references and binding failures, Git baseline checks, exact recovery, evidence deduplication, and completion decisions. Fresh-host installation, Hook trust, and side effects inside one host call remain explicit manual checks.
 
 ## License
 

@@ -42,6 +42,20 @@ Reuse: this is a test and documentation follow-up for the same goal, scope, and 
 Stop: the proposed work may add independent user value and new acceptance; keep the decision in control and do not create a task.
 ```
 
+## One-shot creation claim
+
+The first locked claim is the only create permission:
+
+```text
+Claim: create_once. Call native create_thread once.
+```
+
+Every later claim reconciles, even if the first call reported an error or returned only queue state:
+
+```text
+Claim: reconcile_only. Do not call create_thread again; inspect native tasks. Zero or multiple candidates stop without retry or archive.
+```
+
 ## Marker-free bootstrap result
 
 Do not activate from queued setup:
@@ -50,7 +64,20 @@ Do not activate from queued setup:
 Queued only: clientThreadId=<id>. No real threadId or Git baseline is available; execution remains inactive.
 ```
 
-After native readiness and environment inspection, return the real identity and porcelain status. Create the active registry record and compile the contract only after this report validates.
+After native readiness and environment inspection, return the real identity and porcelain status. Finalize the existing claim to active only after this report validates and reconciliation found exactly one candidate.
+
+## Default same-host handoff
+
+Keep the canonical contract in target `PLUGIN_DATA` and send only:
+
+```text
+Execution Guard is ready for contract feature-slug-v1.
+Task goal: Keep the approved handoff readable and create at most one native task.
+CODEX_EXECUTION_GUARD_CONTRACT_V1
+Execution contract reference: sha256:<64 lowercase hexadecimal characters>
+```
+
+Do not paste the artifact path or full JSON into visible chat. If target `PLUGIN_DATA` cannot be staged because control and execution are on different hosts, use the explicit `fold-inline` output. Never use inline fallback to bypass a same-host validation error.
 
 ## Host-limited acceptance
 

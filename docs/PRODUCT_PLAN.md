@@ -26,11 +26,12 @@ Primary flow:
 1. The user approves execution in the project control task.
 2. Control resolves the real project and decides whether the approved work reuses the active iteration or creates a new one.
 3. Control discovers host-advertised model capabilities, intersects them with the authorized pool, and reports requested versus verified actual model state.
-4. For a new iteration, Codex creates one visible worktree task, waits for a real `threadId`, sets its title, and obtains its real Git baseline through a marker-free bootstrap.
-5. Control persists iteration ownership under a process lock and atomic replacement, then compiles the approved discussion plus baseline into an execution contract.
-6. The execution task verifies its environment and registers the approved steps in `update_plan` before writing code.
-7. The task implements the contract, records only relevant evidence, and survives compaction or resume.
-8. The task returns a concise execution receipt; control later closes the mapping after acceptance or merge.
+4. For a new iteration, control atomically persists a V2 creation claim before one native create call. Every later entry is reconciliation-only, including after queue state, error, timeout, crash, or reload.
+5. Control continues only when reconciliation finds exactly one real task. It verifies the marker-free bootstrap, then atomically finalizes host, `threadId`, worktree, branch, and baseline as active ownership.
+6. Control compiles the approved decisions plus baseline into canonical JSON under private target `PLUGIN_DATA` and sends only a short SHA-256 reference in visible chat.
+7. The Hook validates artifact format, size, hash, contract ID, session, active ownership, and live baseline before state creation. The execution task then registers the approved steps in `update_plan` before writing code.
+8. The task implements the contract, records only relevant evidence, and survives compaction or resume without source-level truncation of contract boundaries, plan, or acceptance.
+9. The task returns a concise execution receipt; control later closes the mapping after acceptance or merge.
 
 ## 4. Four-layer architecture
 
@@ -46,7 +47,7 @@ The trigger does not embed tool order, model policy, registry schema, or lifecyc
 
 ### 4.2 Control layer
 
-The public Skill's control path owns create-versus-reuse, live host capability evidence, model routing, Codex-native project and task calls, queued-to-real task gating, title and worktree acquisition, detached-HEAD repair, baseline validation, ownership persistence, and contract activation. Any missing identity or product ambiguity stops before implementation.
+The public Skill's control path owns create-versus-reuse, live host capability evidence, model routing, the locked pre-create claim, one Codex-native create call, queued/error reconciliation without retry, title and worktree acquisition, detached-HEAD repair, baseline validation, atomic ownership finalization, private contract staging, and short-reference activation. Any missing or ambiguous identity stops before implementation.
 
 Same goal, scope, and acceptance reuse the active task, including its fixes, adjustments, tests, and documentation. Closed or merged iterations, independent user value, and new acceptance criteria create a new task.
 
@@ -62,7 +63,7 @@ Hooks remain inert in ordinary sessions and activate only from the exact marker.
 
 ### 5.1 Plan compiler
 
-Produce a concise execution contract containing:
+Produce one canonical private execution contract containing:
 
 - contract version and stable contract ID;
 - goal and user-visible outcome;
@@ -76,7 +77,7 @@ Produce a concise execution contract containing:
 - acceptance criteria;
 - baseline Git state when available.
 
-Do not send the execution task the full planning transcript.
+Do not send visible chat the full contract or planning transcript on the same host. Stage the contract against active ownership and send natural language plus its short digest reference. Preserve labeled folded-inline V1 only for a cross-host target whose `PLUGIN_DATA` control cannot write.
 
 ### 5.2 Model router
 
@@ -121,7 +122,7 @@ A discovered risk may become current work only when it is directly tied to:
 
 Future hardening, theoretical risks, optional capabilities, and unrelated cleanup go to a backlog and do not become implementation steps.
 
-Do not add hashes, fingerprints, integrity layers, new gate frameworks, or validation of existing gates without a named failure, threat boundary, or acceptance requirement.
+Do not add hashes, fingerprints, integrity layers, new gate frameworks, or validation of existing gates without a named failure, threat boundary, or acceptance requirement. The private contract digest is allowed because this iteration names reproduced visible-handoff and binding failures; it does not authorize wider integrity work.
 
 ### 5.6 Validation budget
 
@@ -135,11 +136,11 @@ Do not add hashes, fingerprints, integrity layers, new gate frameworks, or valid
 
 Use opt-in lifecycle hooks for guarded execution sessions:
 
-- `UserPromptSubmit`: recognize and store the structured execution contract.
+- `UserPromptSubmit`: resolve inline V1 or a private reference, validate all artifact bindings, and only then create structured execution state.
 - `PreToolUse`: protect writes until environment and plan registration are ready; inspect covered local tool calls.
 - `PostToolUse`: record plan transitions and relevant validation evidence.
 - `PreCompact`: persist the latest structured checkpoint.
-- `SessionStart` on resume or compact: restore the contract, current step, Git identity, and recorded evidence as concise context.
+- `SessionStart` on resume or compact: restore every contract boundary plus the exact current plan and acceptance arrays, Git identity, and recorded evidence without source-level character truncation.
 - `Stop`: continue only when an approved step or acceptance item remains incomplete; otherwise allow a receipt.
 
 Hooks must remain inert in ordinary chats and sessions without an active contract marker.
@@ -171,6 +172,7 @@ codex-execution-guard/
 │   ├── hooks/hooks.json
 │   └── scripts/
 │       ├── control_plane.py
+│       ├── contract_protocol.py
 │       └── execution_guard.py
 ├── tests/
 ├── docs/
@@ -180,7 +182,9 @@ codex-execution-guard/
 
 Keep `SKILL.md` concise. Put detailed control, contract, routing, lifecycle, and example rules in one-level references. Use deterministic scripts only for the local ownership registry and execution lifecycle state.
 
-The control registry maps iteration ID to project, real thread, title, worktree, branch, full baseline, and active or closed status. It uses only Python standard library JSON at an explicit private path outside the repository. A stable sidecar process lock serializes every reload, validation, mutation, and atomic replacement, preventing concurrent control tasks from overwriting one another's committed records. No MCP, server, database, network runtime, or telemetry is involved.
+The V2 control registry remains at the established private path `PLUGIN_DATA/control/iterations.json`. `claimed` contains no native task or Git identity; `active` adds verified host, real thread, title, worktree, branch, and full baseline; `closed` preserves ownership. A stable sidecar process lock serializes every reload, validation, mutation, and atomic replacement. V1 migrates in place on the next locked write. No MCP, server, database, network runtime, telemetry, automatic claim expiry, or claim clearing is involved.
+
+The shared standard-library contract protocol writes canonical envelopes under `PLUGIN_DATA/contracts/`, capped at 1 MiB and named by SHA-256. It binds contract ID and target session to the exact active ownership snapshot. The digest is a narrow response to reproduced handoff exposure and binding failures, not a general integrity framework.
 
 ## 7. Non-goals
 
@@ -202,6 +206,14 @@ The current release does not include:
 
 Resolution: `clientThreadId` is only setup state. Control waits for a real `threadId`, clear title, linked worktree, branch, full `HEAD`, and Git status before recording ownership or activating execution.
 
+### A failed create response is retried after the host already created a task
+
+Resolution: persist `claimed` before the native call. Only the first locked claim returns `create_once`; later claims are permanently `reconcile_only`. Errors, timeouts, crashes, reloads, and `clientThreadId` never clear the claim. Reconciliation continues only for exactly one candidate and never archives ambiguous candidates automatically.
+
+### The complete JSON contract overwhelms visible chat
+
+Resolution: same-host control stores one canonical private artifact bound to active ownership and target session. Visible chat contains only natural language, the marker, and a short SHA-256 reference. The Hook validates format, size, hash, ID, session, ownership, contract baseline, and live Git before creating state. Inline V1 remains only as the labeled cross-host fallback.
+
 ### Registry silently splits iteration ownership
 
 Resolution: validate every record, hold a stable sidecar process lock across the complete read-modify-write transaction, replace JSON atomically, compare expected baselines, and reject duplicate thread, worktree, and same-project branch ownership. A waiting writer reloads after acquiring the lock, so concurrent writes do not lose committed records. Corrupt state stops control without overwrite.
@@ -220,7 +232,7 @@ Resolution: use stable step IDs and compare updates to the stored approved set. 
 
 ### Compaction restores stale or excessive context
 
-Resolution: restore only the approved contract, current plan state, Git identity, deviations, and evidence. Never replay or store the full transcript.
+Resolution: restore every approved contract boundary plus the exact current plan and acceptance arrays, Git identity, deviations, escalation, and evidence. Do not silently truncate fields in plugin source, and never replay or store the full planning transcript.
 
 ### Corrupted local state bricks Codex
 
@@ -240,24 +252,27 @@ Resolution: document Hooks as guardrails rather than a security boundary, test s
 
 ### The plugin recreates the overengineering it opposes
 
-Resolution: one focused control helper plus the preserved execution state engine, no MCP, no checksums, no general policy language, no speculative abstractions, and tests limited to the frozen control and lifecycle contracts.
+Resolution: one focused control helper, one small shared contract protocol, and the preserved execution state engine. There is no MCP, service, database, telemetry, broad integrity framework, or speculative abstraction. SHA-256 is limited to the reproduced private-artifact boundary.
 
 ## 9. Acceptance scenarios
 
-1. Same-goal work and iteration maintenance reuse the active task; closed work, independent value, and new acceptance create a task; ambiguity stops.
-2. Duplicate ownership, stale baseline, incomplete record, or corrupt registry fails safely without overwrite; a deterministic two-process case proves the second writer waits, reloads, and preserves both records.
-3. A queued `clientThreadId`, detached final report, dirty baseline, or incomplete identity cannot activate execution.
-4. Host-advertised and authorized model evidence is intersected, local fallback is labeled non-live, and actual model state is not fabricated.
-5. A normal chat without a contract is unaffected.
-6. A guarded execution task cannot write before environment verification and plan registration.
-7. The original plan registers unchanged with stable IDs and at most one `in_progress` step.
-8. An unapproved plan step addition is rejected with a return-to-control-task message.
-9. A guarded task resumes after simulated compaction with the correct contract and current step.
-10. Required validation evidence is recorded once; unchanged duplicate validation does not become progress.
-11. `Stop` continues an incomplete contract and allows completion after all approved acceptance items are satisfied.
-12. The plugin and Skill validators plus control and lifecycle fixtures pass.
-13. Fresh-host task creation, actual runtime model identity, marketplace reload, Skill discovery, and Hook trust remain explicit manual host checks rather than fixture claims.
-14. No MCP configuration, server, database, network dependency, telemetry, remote Git action, or personal path is included in the distributable plugin.
+1. Same-goal work and iteration maintenance reuse the active task; closed work, independent value, and new acceptance start a new iteration; ambiguity stops.
+2. Sequential and concurrent claims grant exactly one `create_once`; every later claim returns `reconcile_only`.
+3. An error, timeout, crash, reload, or queued `clientThreadId` cannot clear a claim or authorize another native create call.
+4. Finalize accepts exactly one real verified task, is atomic and idempotent, and stops on zero, multiple, dirty, detached, incomplete, or conflicting candidates without retry or automatic archive.
+5. The next locked write migrates V1 to V2 without losing existing active or closed records.
+6. The default fixture handoff includes a readable single-line goal, remains below 600 UTF-8 bytes through character-safe truncation, and exposes no full JSON, arrays, or absolute worktree path.
+7. Missing, oversized, malformed, tampered, wrong-ID, wrong-session, inactive-ownership, and wrong-baseline artifacts fail before partial session state; reference plus inline JSON is rejected.
+8. Inline V1 remains compatible, and an ordinary unmarked chat remains fail-open.
+9. Activation and simulated compact/resume preserve every contract boundary plus the exact plan and acceptance arrays without source-level truncation.
+10. Host-advertised and authorized model evidence is intersected, local fallback is labeled non-live, and actual model state is not fabricated.
+11. A guarded execution task cannot write before environment verification and exact plan registration.
+12. An unapproved plan step addition is rejected with a return-to-control-task message.
+13. Required validation evidence is recorded once; unchanged duplicate validation does not become progress.
+14. `Stop` continues an incomplete contract and allows completion after all approved acceptance items are satisfied.
+15. The plugin and Skill validators plus control and lifecycle fixtures pass.
+16. Fresh-host task creation, actual runtime model identity, marketplace reload, Skill discovery, Hook trust, and host-side context delivery remain explicit manual checks rather than fixture claims.
+17. No MCP configuration, server, database, network dependency, telemetry, remote Git action, personal path, live registry, contract artifact, or transcript is included in the distributable source commit.
 
 ## 10. Implemented release scope
 
@@ -270,3 +285,10 @@ The 0.2.0 release implements the following scope:
 5. Synchronize product, usage, Skill UI, and plugin interface metadata.
 6. Validate the control, lifecycle, Skill, and plugin contracts.
 7. Keep fresh-host installation, marketplace reload, Skill discovery, Hook trust, and actual runtime-model identity as explicit host checks.
+
+The current unreleased follow-up adds:
+
+1. A V2 `claimed → active → closed` registry with one-shot creation authorization, reconcile-only recovery, atomic finalize, and locked V1 migration.
+2. Canonical private contract artifacts, short visible references, strict Hook binding checks, and the labeled cross-host inline fallback.
+3. Exact activation and compact/resume context for every contract boundary, plan item, and acceptance item without plugin-side truncation.
+4. Deterministic regression fixtures and synchronized Skill, product, usage, architecture, and changelog documentation.

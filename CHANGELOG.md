@@ -4,7 +4,11 @@ All notable changes to this project are documented here. 本文件记录项目�
 
 ## Unreleased / 未发布
 
-- No changes yet. / 暂无变更。
+- Added locked V2 creation claims, reconcile-only recovery, atomic finalization, and migration of V1 ownership records on the next locked write. / 增加持锁的 V2 创建 claim、仅 reconcile 恢复、原子 finalize，以及下一次持锁写入时的 V1 所有权记录迁移。
+- Prevented automatic duplicate task creation after queue state, errors, timeouts, crashes, or reloads; zero or multiple native candidates now stop without retry or automatic archive. / 防止排队、报错、超时、崩溃或重载后自动重复创建任务；原生候选为零个或多个时停止，不重试也不自动归档。
+- Replaced the default visible JSON handoff with a UTF-8-bounded single-line task goal, private canonical contract artifact, and short SHA-256 reference, with strict format, size, ID, session, ownership, and Git-baseline checks before activation. / 默认不再在聊天正文暴露完整 JSON，改为受 UTF-8 字节上限约束的单行任务目标、私有 canonical 合同 artifact 与短 SHA-256 引用，并在激活前严格检查格式、大小、ID、session、ownership 和 Git 基线。
+- Preserved inline V1 and added an explicit folded-inline cross-host fallback while rejecting reference-plus-inline ambiguity. / 保留 inline V1，并增加明确折叠的跨宿主 inline fallback，同时拒绝 reference 与 inline 并存的歧义输入。
+- Removed source-level truncation from activation and compact/resume contract, plan, and acceptance context. / 移除激活与 compact/resume 上下文中对合同、计划和验收的源码级截断。
 
 ## 0.2.1 - 2026-08-10
 

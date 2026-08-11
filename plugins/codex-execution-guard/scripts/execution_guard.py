@@ -12,8 +12,15 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from contract_protocol import (
+    ContractProtocolError,
+    MARKER,
+    canonical_json_bytes,
+    load_active_ownership,
+    load_contract_artifact,
+    reference_digest,
+)
 
-MARKER = "CODEX_EXECUTION_GUARD_CONTRACT_V1"
 MARKER_PATTERN = re.compile(rf"(?m)^{re.escape(MARKER)}\r?$")
 STATE_VERSION = 1
 VALID_STATUSES = {"pending", "in_progress", "completed"}
@@ -130,13 +137,39 @@ def contract_marker(prompt: str) -> re.Match[str] | None:
     return MARKER_PATTERN.search(prompt)
 
 
-def parse_contract(prompt: str) -> dict[str, Any] | None:
+def parse_contract(
+    prompt: str,
+    *,
+    event: dict[str, Any] | None = None,
+    data_root: Path | None = None,
+) -> dict[str, Any] | None:
     marker = contract_marker(prompt)
     if marker is None:
         return None
+    try:
+        digest = reference_digest(prompt, marker_end=marker.end())
+    except ContractProtocolError as exc:
+        raise GuardError(str(exc)) from exc
     object_at = prompt.find("{", marker.end())
+    if digest is not None and object_at >= 0:
+        raise GuardError("Execution contract prompt cannot contain both a private reference and inline JSON.")
+    if digest is not None:
+        if event is None or data_root is None:
+            raise GuardError(
+                "Execution contract reference requires the target session and its private PLUGIN_DATA."
+            )
+        try:
+            artifact = load_contract_artifact(data_root, digest)
+        except ContractProtocolError as exc:
+            raise GuardError(str(exc)) from exc
+        contract = artifact["contract"]
+        validate_contract(contract)
+        validate_reference_binding(artifact, event, data_root)
+        return contract
     if object_at < 0:
-        raise GuardError(f"{MARKER} must be followed by a JSON contract object.")
+        raise GuardError(
+            f"{MARKER} must be followed by one valid private reference or a JSON contract object."
+        )
     try:
         contract, _ = json.JSONDecoder().raw_decode(prompt[object_at:])
     except json.JSONDecodeError as exc:
@@ -277,6 +310,39 @@ def verify_baseline(state: dict[str, Any], cwd: str) -> dict[str, Any]:
     if failures:
         raise GuardError("Environment verification failed: " + "; ".join(failures))
     return actual
+
+
+def validate_reference_binding(
+    artifact: dict[str, Any],
+    event: dict[str, Any],
+    data_root: Path,
+) -> None:
+    session_id = event.get("session_id")
+    if not isinstance(session_id, str) or session_id != artifact["target_session_id"]:
+        raise GuardError("Execution contract reference is bound to a different target session.")
+    ownership = artifact["ownership"]
+    if artifact["target_session_id"] != ownership["thread_id"]:
+        raise GuardError("Execution contract reference target does not match native thread ownership.")
+    event_host = event.get("host_id")
+    if event_host is not None and event_host != ownership["host_id"]:
+        raise GuardError("Execution contract reference is bound to a different host.")
+    contract = artifact["contract"]
+    if artifact["contract_id"] != ownership["iteration_id"]:
+        raise GuardError("Execution contract ID does not match active iteration ownership.")
+    try:
+        active = load_active_ownership(data_root, artifact["contract_id"])
+    except ContractProtocolError as exc:
+        raise GuardError(str(exc)) from exc
+    if active != ownership:
+        raise GuardError("Execution contract ownership changed after the private artifact was staged.")
+    baseline = contract["baseline"]
+    if (
+        str(Path(baseline["worktree"]).resolve()) != ownership["worktree"]
+        or baseline["branch"] != ownership["branch"]
+        or baseline["head"].lower() != ownership["baseline"]
+    ):
+        raise GuardError("Execution contract baseline does not match active iteration ownership.")
+    verify_baseline({"contract": contract}, event["cwd"])
 
 
 def verify_execution_location(state: dict[str, Any], cwd: str) -> None:
@@ -516,9 +582,21 @@ def escalation_receipt(state: dict[str, Any]) -> str:
     )
 
 
-def compact_json(value: Any, limit: int = 1400) -> str:
-    rendered = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return rendered if len(rendered) <= limit else rendered[: limit - 3] + "..."
+def exact_json(value: Any) -> str:
+    return canonical_json_bytes(value).decode("utf-8")
+
+
+def activation_context(state: dict[str, Any]) -> str:
+    contract = state["contract"]
+    return (
+        f"Execution Guard activated contract {contract['contract_id']}. "
+        f"Route: {contract['selected_model']} ({contract['route_reason']}).\n"
+        f"Exact contract JSON: {exact_json(contract)}\n"
+        f"Exact current plan JSON: {exact_json(state['plan'])}\n"
+        f"Exact current acceptance JSON: {exact_json(state['acceptance'])}\n"
+        "Verify worktree, branch, HEAD, and status; then register the exact approved plan "
+        "with update_plan before any write."
+    )
 
 
 def concise_restore(state: dict[str, Any], cwd: str) -> str:
@@ -533,27 +611,35 @@ def concise_restore(state: dict[str, Any], cwd: str) -> str:
     restored = (
         f"Execution Guard restored contract {contract['contract_id']}: {contract['goal']}\n"
         f"Selected model: {contract['selected_model']} ({contract['route_reason']})\n"
-        f"Scope: {compact_json(contract['scope'])}\n"
-        f"Decisions: {compact_json(contract['decisions'])}\n"
-        f"Non-goals: {compact_json(contract['non_goals'])}\n"
-        f"Forbidden operations: {compact_json(contract['forbidden_operations'])}\n"
+        f"Scope: {exact_json(contract['scope'])}\n"
+        f"Decisions: {exact_json(contract['decisions'])}\n"
+        f"Non-goals: {exact_json(contract['non_goals'])}\n"
+        f"Forbidden operations: {exact_json(contract['forbidden_operations'])}\n"
+        f"Authorized models: {exact_json(contract['authorized_models'])}\n"
+        f"Allowed adjustments: {exact_json(contract['allowed_adjustments'])}\n"
+        f"Escalation conditions: {exact_json(contract['escalation_conditions'])}\n"
+        f"Validation budget: {exact_json(contract['validation_budget'])}\n"
         f"Plan: {plan}; current step: {current_step(state) or 'none'}\n"
+        f"Exact plan: {exact_json(state['plan'])}\n"
         f"Acceptance: {acceptance}\n"
-        f"Baseline: {state['contract']['baseline']}\n"
+        f"Exact acceptance: {exact_json(state['acceptance'])}\n"
+        f"Baseline: {exact_json(state['contract']['baseline'])}\n"
         f"Current Git: worktree={actual['worktree']}, branch={actual['branch']}, HEAD={actual['head']}, "
         f"changed_paths={changed_paths(actual['status'])}\n"
-        f"Escalation: {compact_json(state.get('escalation'))}\n"
-        f"Evidence: {evidence}; deviations: {state['deviations']}\n"
+        f"Escalation: {exact_json(state.get('escalation'))}\n"
+        f"Evidence summary: {evidence}\n"
+        f"Exact evidence: {exact_json(state['evidence'])}; deviations: {exact_json(state['deviations'])}\n"
+        f"Exact contract JSON: {exact_json(contract)}\n"
         "Re-check Git identity, preserve the exact approved plan, and continue only the current approved step."
     )
-    return restored if len(restored) <= 12000 else restored[:11997] + "..."
+    return restored
 
 
 def on_user_prompt(event: dict[str, Any], path: Path, state: dict[str, Any] | None) -> None:
     prompt = event.get("prompt")
     if not isinstance(prompt, str):
         raise GuardError("UserPromptSubmit is missing prompt text.")
-    contract = parse_contract(prompt)
+    contract = parse_contract(prompt, event=event, data_root=path.parent.parent)
     if contract is None:
         if state:
             context("UserPromptSubmit", f"Execution Guard remains active for {state['contract']['contract_id']}.")
@@ -565,12 +651,7 @@ def on_user_prompt(event: dict[str, Any], path: Path, state: dict[str, Any] | No
     else:
         state = new_state(event, contract)
         atomic_write(path, state)
-    context(
-        "UserPromptSubmit",
-        f"Execution Guard activated contract {contract['contract_id']}. Route: {contract['selected_model']} "
-        f"({contract['route_reason']}). Verify worktree, branch, HEAD, and status; then register the exact approved plan "
-        "with update_plan before any write.",
-    )
+    context("UserPromptSubmit", activation_context(state))
 
 
 def on_pre_tool(event: dict[str, Any], state: dict[str, Any]) -> None:

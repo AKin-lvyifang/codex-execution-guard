@@ -66,7 +66,7 @@ Material product ambiguity remains in control. The executor is not asked to inve
 | The work introduces new acceptance criteria | Create a new task |
 | Evidence is missing or contradictory | Stop in control |
 
-A private local ownership registry records the real task, worktree, branch, and baseline for each iteration. It is never committed to the project.
+The V2 ownership registry remains at the established private target-host path `PLUGIN_DATA/control/iterations.json` and is never committed. A new iteration starts as `claimed` without task or Git identity, becomes `active` only after verification, and becomes `closed` only after control accepts completion or merge. A V1 file at that same path migrates in place on the next locked write.
 
 ## 6. Select an execution model
 
@@ -85,13 +85,15 @@ If live discovery is unavailable, a local-pool fallback is allowed only when the
 ## 7. Create and verify the worktree task
 
 1. Resolve the real Git project with native Codex project tools.
-2. Create one visible task whose environment type is `worktree`.
-3. Treat `clientThreadId` only as a queue token and wait for a real `threadId`.
-4. Set a clear title.
-5. Ask the task to report only `cwd`, worktree identity, branch, full `HEAD`, and Git status.
-6. If detached, create and switch exactly one `codex/<iteration>` branch.
-7. Require a clean worktree unless the approved contract says otherwise.
-8. Send the execution contract only after control verifies and persists the real baseline.
+2. Persist a locked claim for the iteration in the V2 registry. The first result is one `create_once`; every later result is permanently `reconcile_only`.
+3. Only for `create_once`, create one visible worktree task, with exactly one native create call.
+4. Do not retry after a task, `clientThreadId`, error, or timeout response. Reconcile through the host's status surface or bounded task lists; zero or multiple candidates stop without automatic archive.
+5. Treat `clientThreadId` only as a queue token and wait for the one real `threadId`.
+6. Set a clear title and ask the task to report only `cwd`, linked-worktree identity, branch, full `HEAD`, and Git status.
+7. If detached, create and switch exactly one `codex/<iteration>` branch.
+8. Require a clean worktree unless the approved contract says otherwise.
+9. Finalize the claim to `active` only after exactly one candidate returns a complete verified report. Repeating the same finalize is idempotent; conflicting ownership stops.
+10. Compile and privately stage the contract against active ownership, then send its short reference.
 
 The first bootstrap prompt contains no activation marker and does not authorize project writes, plan changes, validation, commits, or additional tasks.
 
@@ -103,7 +105,18 @@ Guarded execution activates only when this marker appears on its own line:
 CODEX_EXECUTION_GUARD_CONTRACT_V1
 ```
 
-It is followed by a JSON contract containing the version and ID, goal, scope, frozen decisions, non-goals, forbidden operations, authorized and selected model, route evidence, real Git baseline, stable plan, allowed adjustments, escalation conditions, validation budget, and stable acceptance items.
+The default same-host handoff does not put full JSON in visible chat. Control writes canonical JSON under private `PLUGIN_DATA/contracts/`; chat contains the contract ID, a single-line task goal derived from `goal`, the marker, and one short reference:
+
+```text
+Task goal: <single-line task-goal summary>
+Execution contract reference: sha256:<64 lowercase hexadecimal characters>
+```
+
+The complete visible message is capped at 599 UTF-8 bytes. A long goal is truncated on a full character boundary with an ellipsis; newlines are folded, JSON brackets are neutralized, and the exact owned worktree path is replaced before rendering.
+
+Before creating session state, the Hook validates reference format, the 1 MiB size limit, SHA-256, contract ID, target session, V2 active ownership, and live Git baseline. A missing, oversized, malformed, tampered, or wrongly bound artifact stops without partial activation. A prompt containing both a reference and inline JSON is rejected.
+
+The complete contract still contains version and ID, goal, scope, frozen decisions, non-goals, forbidden operations, authorized and selected model, route evidence, real Git baseline, stable plan, allowed adjustments, escalation conditions, validation budget, and stable acceptance items. Inline V1 remains compatible. Use the explicitly labeled folded-inline fallback only when control and execution are on different hosts and target `PLUGIN_DATA` cannot be staged; it must not bypass a same-host artifact failure.
 
 In an ordinary session without a valid marker, the Hooks create no guard state and exit successfully.
 
@@ -117,15 +130,15 @@ The executor may change status and add a concise implementation note that does n
 
 New work enters the current implementation only when it is the current deliverable, an observed failure, an approved acceptance item, or a direct blocker.
 
-Future hardening, theoretical risk, optional capabilities, extra hashes, fingerprints, and generic gate frameworks become backlog notes. A repeated command with the same result, Git state, current step, and acceptance target is duplicate evidence, not progress.
+Beyond the approved private-contract digest, future hardening, theoretical risk, optional capabilities, extra hashes, fingerprints, and generic gate frameworks become backlog notes. A repeated command with the same result, Git state, current step, and acceptance target is duplicate evidence, not progress.
 
 When implementation needs a new step, wider scope, changed acceptance, an unauthorized model, or a forbidden operation, the executor records evidence and escalates to control instead of editing the contract.
 
 ## 11. Compaction and resume
 
-Before compaction, Hooks persist the structured checkpoint. Resume restores only the contract and goal, model route, scope, decisions, non-goals, forbidden operations, complete plan and acceptance state, worktree and Git identity, allowed deviations, and concise evidence.
+Before compaction, Hooks persist the structured checkpoint. Resume injects every contract boundary, the exact current plan and acceptance arrays, worktree and Git identity, allowed deviations, escalation, and evidence into private Hook context. The plugin source does not silently truncate those fields by character count.
 
-Git is checked again before writes resume. The plugin does not reconstruct scope from a lossy conversation summary or replay the full planning transcript.
+Git is checked again before writes resume. The plugin does not reconstruct scope from a lossy conversation summary or replay the full planning transcript. Any external host context limit remains a separate fresh-host verification item.
 
 ## 12. Completion and receipt
 
@@ -158,7 +171,15 @@ Compare the contract's absolute worktree, branch, and full `HEAD` with the task 
 
 ### Only `clientThreadId` is available
 
-The task is still queued. Wait for a real `threadId` and environment identity before activating the contract.
+The task is still queued and the durable claim remains `reconcile_only`. Wait for one real `threadId` and environment identity without another create call before activating the contract.
+
+### `create_thread` reports an error or timeout
+
+Do not retry. The host may already have produced a side effect. Reading the same iteration claim returns `reconcile_only`; inspect native tasks instead. Continue bootstrap only for exactly one candidate. Zero or multiple candidates return to human control.
+
+### A contract reference does not activate
+
+Check that the target session uses the same `PLUGIN_DATA`, the V2 ownership record remains active, and worktree, branch, and `HEAD` still match the artifact. Control may stage a new artifact against current active ownership. Do not paste old JSON to bypass the failure.
 
 ### The actual model is unverified
 

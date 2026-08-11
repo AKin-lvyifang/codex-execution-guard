@@ -18,8 +18,10 @@ Without the marker, do not create guard state, steer the task, or block tools.
 ## Control the iteration
 
 - Keep uncertainty in the control task. Never let an execution task decide product scope or create another task.
-- Use Codex-native project and task tools for discovery, creation, waiting, naming, and messaging. Use the bundled local registry only for durable iteration ownership; do not replace native tools with MCP or a project manager.
-- Activate execution only after a real `threadId` and a verified worktree, branch, `HEAD`, and status have returned to control.
+- Use Codex-native project and task tools for discovery, creation, waiting, naming, and messaging. Use the bundled V2 registry only for durable iteration ownership; do not replace native tools with MCP or a project manager.
+- Atomically claim a new iteration before `create_thread`. Only the first claim authorizes that one call. Every later claim is `reconcile_only`, including after an error, timeout, crash, reload, or queued `clientThreadId`; never clear or expire a claim automatically.
+- Finalize ownership only after reconciliation finds exactly one real `threadId` with a verified worktree, branch, `HEAD`, and status. Zero or multiple candidates stop without another create or automatic archive.
+- On the same host, stage the canonical contract under private `PLUGIN_DATA` and send only a UTF-8-bounded single-line goal plus the short SHA-256 reference. Use the labeled folded-inline fallback only when target `PLUGIN_DATA` cannot be staged across hosts.
 
 ## Execute the contract
 

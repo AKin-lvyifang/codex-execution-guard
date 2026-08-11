@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -11,8 +13,25 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = ROOT / "plugins" / "codex-execution-guard" / "scripts" / "execution_guard.py"
+SCRIPTS = ROOT / "plugins" / "codex-execution-guard" / "scripts"
+SCRIPT = SCRIPTS / "execution_guard.py"
+CONTROL_SCRIPT = SCRIPTS / "control_plane.py"
 MARKER = "CODEX_EXECUTION_GUARD_CONTRACT_V1"
+
+
+def load_module(name: str, path: Path) -> Any:
+    scripts = str(path.parent)
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Cannot load {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+control = load_module("lifecycle_control_plane", CONTROL_SCRIPT)
 
 
 class LifecycleFixtureTests(unittest.TestCase):
@@ -88,14 +107,21 @@ class LifecycleFixtureTests(unittest.TestCase):
             "cwd": str(self.repo),
             "hook_event_name": hook_event_name,
             "model": "gpt-5.6-sol",
+            "host_id": "host-fixture",
         }
         event.update(fields)
         return event
 
-    def run_hook(self, event: dict[str, Any], *, with_plugin_data: bool = True) -> dict[str, Any] | None:
+    def run_hook(
+        self,
+        event: dict[str, Any],
+        *,
+        with_plugin_data: bool = True,
+        plugin_data: Path | None = None,
+    ) -> dict[str, Any] | None:
         environment = dict(os.environ)
         if with_plugin_data:
-            environment["PLUGIN_DATA"] = str(self.data)
+            environment["PLUGIN_DATA"] = str(plugin_data or self.data)
         else:
             environment.pop("PLUGIN_DATA", None)
         completed = subprocess.run(
@@ -122,6 +148,71 @@ class LifecycleFixtureTests(unittest.TestCase):
             "UserPromptSubmit",
         )
         return self.contract()
+
+    def stage_reference(
+        self,
+        contract: dict[str, Any],
+        *,
+        session_id: str,
+        plugin_data: Path | None = None,
+    ) -> tuple[Any, dict[str, Any]]:
+        data = plugin_data or self.data
+        registry = control.IterationRegistry(data / "control" / "iterations.json")
+        title = f"Execute {contract['contract_id']}"
+        claim = registry.claim(
+            iteration_id=contract["contract_id"],
+            project_id="project-fixture",
+            title=title,
+        )
+        if claim["action"] == "create_once":
+            registry.finalize_claim(
+                contract["contract_id"],
+                candidates=[
+                    {
+                        "thread_id": session_id,
+                        "host_id": "host-fixture",
+                        "title": title,
+                        "worktree": str(self.repo),
+                        "linked_worktree": True,
+                        "branch": "main",
+                        "head": self.head,
+                        "status": "",
+                    }
+                ],
+            )
+        handoff = control.stage_contract_handoff(
+            plugin_data=data,
+            registry=registry,
+            iteration_id=contract["contract_id"],
+            target_session_id=session_id,
+            contract=contract,
+        )
+        return registry, handoff
+
+    def rewrite_artifact(
+        self,
+        handoff: dict[str, Any],
+        mutate: Any,
+    ) -> dict[str, Any]:
+        original = Path(handoff["artifact_path"])
+        artifact = json.loads(original.read_text(encoding="utf-8"))
+        mutate(artifact)
+        payload = json.dumps(
+            artifact,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        rewritten = original.with_name(f"{digest}.json")
+        rewritten.write_bytes(payload)
+        return {
+            **handoff,
+            "digest": digest,
+            "artifact_path": str(rewritten),
+            "prompt": handoff["prompt"].replace(handoff["digest"], digest),
+        }
 
     def approved_plan(self, *, complete: bool = False, explanation: str | None = None) -> dict[str, Any]:
         status = "completed" if complete else None
@@ -161,8 +252,14 @@ class LifecycleFixtureTests(unittest.TestCase):
         )
         self.assertIn("accepted", accepted["hookSpecificOutput"]["additionalContext"])  # type: ignore[index]
 
-    def state(self, session_id: str = "guarded") -> dict[str, Any]:
-        return json.loads((self.data / "sessions" / f"{session_id}.json").read_text(encoding="utf-8"))
+    def state(
+        self,
+        session_id: str = "guarded",
+        *,
+        plugin_data: Path | None = None,
+    ) -> dict[str, Any]:
+        data = plugin_data or self.data
+        return json.loads((data / "sessions" / f"{session_id}.json").read_text(encoding="utf-8"))
 
     def test_ordinary_session_is_inert_and_creates_no_state(self) -> None:
         prompt = self.run_hook(
@@ -241,6 +338,158 @@ class LifecycleFixtureTests(unittest.TestCase):
         )
         self.assertIsNone(result)
         self.assertFalse((self.data / "sessions" / "inline.json").exists())
+
+    def test_reference_activation_and_resume_preserve_exact_untruncated_contract(self) -> None:
+        tail_decision = "DECISION_TAIL_SENTINEL"
+        tail_step = "PLAN_TAIL_SENTINEL"
+        tail_acceptance = "ACCEPTANCE_TAIL_SENTINEL"
+        contract = self.contract(
+            contract_id="reference-exact-v1",
+            decisions=["long boundary " * 1200 + tail_decision],
+            plan=[
+                {"id": "P1", "step": "P1 First exact boundary", "status": "in_progress"},
+                {"id": "P2", "step": "P2 " + "exact step " * 400 + tail_step, "status": "pending"},
+            ],
+            acceptance=[
+                {"id": "A1", "criterion": "First exact acceptance", "status": "pending"},
+                {
+                    "id": "A2",
+                    "criterion": "exact criterion " * 400 + tail_acceptance,
+                    "status": "pending",
+                },
+            ],
+        )
+        _, handoff = self.stage_reference(contract, session_id="reference-exact")
+        visible = handoff["prompt"]
+        self.assertLess(len(visible.encode("utf-8")), 600)
+        self.assertNotIn("{", visible)
+        self.assertNotIn("[", visible)
+        self.assertNotIn(str(self.repo), visible)
+
+        activated = self.run_hook(
+            self.event(
+                "reference-exact",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=visible,
+            )
+        )
+        activation_context = activated["hookSpecificOutput"]["additionalContext"]  # type: ignore[index]
+        self.assertIn(tail_decision, activation_context)
+        self.assertIn(tail_step, activation_context)
+        self.assertIn(tail_acceptance, activation_context)
+        self.assertEqual(self.state("reference-exact")["contract"], contract)
+
+        restored = self.run_hook(
+            self.event(
+                "reference-exact",
+                "SessionStart",
+                source="compact",
+                permission_mode="default",
+            )
+        )
+        restore_context = restored["hookSpecificOutput"]["additionalContext"]  # type: ignore[index]
+        self.assertIn(tail_decision, restore_context)
+        self.assertIn(tail_step, restore_context)
+        self.assertIn(tail_acceptance, restore_context)
+
+    def test_reference_rejects_missing_oversized_tampered_and_ambiguous_artifacts(self) -> None:
+        cases = ("missing", "oversized", "tampered", "ambiguous")
+        for case in cases:
+            with self.subTest(case=case):
+                data = self.root / f"plugin-data-artifact-{case}"
+                contract = self.contract(contract_id=f"reference-{case}-v1")
+                _, handoff = self.stage_reference(
+                    contract,
+                    session_id=f"reference-{case}",
+                    plugin_data=data,
+                )
+                artifact = Path(handoff["artifact_path"])
+                prompt = handoff["prompt"]
+                if case == "missing":
+                    artifact.unlink()
+                elif case == "oversized":
+                    artifact.write_bytes(b"x" * (1024 * 1024 + 1))
+                elif case == "tampered":
+                    artifact.write_bytes(artifact.read_bytes() + b" ")
+                else:
+                    prompt += "\n" + json.dumps(contract)
+                result = self.run_hook(
+                    self.event(
+                        f"reference-{case}",
+                        "UserPromptSubmit",
+                        turn_id="turn-1",
+                        prompt=prompt,
+                    ),
+                    plugin_data=data,
+                )
+                self.assertEqual(result["decision"], "block")  # type: ignore[index]
+                self.assertFalse((data / "sessions" / f"reference-{case}.json").exists())
+
+    def test_reference_rejects_wrong_id_session_ownership_and_baseline(self) -> None:
+        cases = ("id", "session", "ownership", "baseline")
+        for case in cases:
+            with self.subTest(case=case):
+                data = self.root / f"plugin-data-binding-{case}"
+                session_id = f"reference-binding-{case}"
+                contract = self.contract(contract_id=f"binding-{case}-v1")
+                registry, handoff = self.stage_reference(
+                    contract,
+                    session_id=session_id,
+                    plugin_data=data,
+                )
+                event_session = session_id
+                if case == "id":
+                    handoff = self.rewrite_artifact(
+                        handoff,
+                        lambda artifact: artifact.__setitem__("contract_id", "wrong-contract-v1"),
+                    )
+                elif case == "session":
+                    event_session += "-other"
+                elif case == "ownership":
+                    registry.update(
+                        contract["contract_id"],
+                        expected_baseline=self.head,
+                        changes={"title": "Ownership changed after staging"},
+                    )
+                else:
+                    handoff = self.rewrite_artifact(
+                        handoff,
+                        lambda artifact: artifact["contract"]["baseline"].__setitem__(
+                            "head", "b" * 40
+                        ),
+                    )
+                result = self.run_hook(
+                    self.event(
+                        event_session,
+                        "UserPromptSubmit",
+                        turn_id="turn-1",
+                        prompt=handoff["prompt"],
+                    ),
+                    plugin_data=data,
+                )
+                self.assertEqual(result["decision"], "block")  # type: ignore[index]
+                self.assertFalse((data / "sessions" / f"{event_session}.json").exists())
+
+    def test_malformed_reference_fails_closed_while_inline_v1_still_activates(self) -> None:
+        malformed = (
+            "Use the approved private contract.\n"
+            f"{MARKER}\n"
+            "Execution contract reference: sha256:not-a-digest"
+        )
+        denied = self.run_hook(
+            self.event(
+                "malformed-reference",
+                "UserPromptSubmit",
+                turn_id="turn-1",
+                prompt=malformed,
+            )
+        )
+        self.assertEqual(denied["decision"], "block")  # type: ignore[index]
+        self.assertFalse((self.data / "sessions" / "malformed-reference.json").exists())
+
+        inline = self.activate("inline-v1-compatible")
+        self.assertEqual(self.state("inline-v1-compatible")["contract"], inline)
 
     def test_bootstrap_allows_only_exact_commands_across_semicolon_or_newline_sequences(self) -> None:
         self.activate()

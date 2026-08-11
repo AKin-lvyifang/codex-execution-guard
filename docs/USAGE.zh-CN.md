@@ -74,7 +74,7 @@ codex plugin add codex-execution-guard@codex-execution-guard
 | 出现新的验收标准 | 创建新任务 |
 | 证据缺失或互相矛盾 | 停在主控决定 |
 
-本地所有权记录保存迭代对应的真实任务、worktree、分支和基线。它位于明确选择的私有本地状态路径，不会提交进仓库。
+V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/control/iterations.json`，不会提交进仓库。新迭代先保存不含 task/Git 身份的 `claimed` 记录，核对成功后变为 `active`，主控接受完成或合并后才变为 `closed`。同一路径里的 V1 文件会在下一次持锁写入时原地整体迁移。
 
 ## 6. 选择执行模型
 
@@ -95,13 +95,15 @@ codex plugin add codex-execution-guard@codex-execution-guard
 新迭代按以下顺序启动：
 
 1. 通过 Codex 原生项目工具找到真实 Git 项目。
-2. 创建一个左侧可见、环境类型为 worktree 的任务。
-3. 把 `clientThreadId` 只当成排队标识，等待真实 `threadId`。
-4. 设置清楚的任务标题。
-5. 让新任务只报告 `cwd`、worktree 身份、分支、完整 `HEAD` 和 Git 状态。
-6. 若任务处于 detached HEAD，只建立并切换一条唯一的 `codex/<iteration>` 分支。
-7. 要求干净现场，除非合同明确允许基线改动。
-8. 主控验证并保存真实基线后，才发送执行合同。
+2. 在 V2 registry 中持锁 claim 当前 iteration。第一次只返回一次 `create_once`；之后永远是 `reconcile_only`。
+3. 只有拿到 `create_once` 时，才创建一个左侧可见、环境类型为 worktree 的任务，而且只调用一次。
+4. 创建工具返回任务、`clientThreadId`、错误或超时后都不重试。通过宿主状态面或有界的任务列表做 reconcile；零个或多个候选都停止，不自动归档。
+5. 把 `clientThreadId` 只当成排队标识，等待唯一真实 `threadId`。
+6. 设置清楚的任务标题，让任务只报告 `cwd`、linked worktree 身份、分支、完整 `HEAD` 和 Git 状态。
+7. 若任务处于 detached HEAD，只建立并切换一条唯一的 `codex/<iteration>` 分支。
+8. 要求干净现场，除非合同明确允许基线改动。
+9. 只有一个候选且完整报告验证通过后，才把 claim 原子 finalize 为 `active`。重复 finalize 同一身份是幂等的，冲突身份会停止。
+10. 主控根据 active ownership 编译并私有保存合同，再发送短引用。
 
 用于取得环境身份的第一次提示不带激活标记，也不允许写代码、登记计划、验证、提交或再创建任务。
 
@@ -113,7 +115,18 @@ Execution Guard 使用单独一行的版本化标记激活受控执行：
 CODEX_EXECUTION_GUARD_CONTRACT_V1
 ```
 
-标记后是一份 JSON 合同，包含合同版本和稳定 ID、目标、范围、决定、非目标、禁止操作、授权模型、真实 Git 基线、稳定计划、允许调整、升级条件、验证预算和验收标准。
+同一宿主的默认交接不会把完整 JSON 放进聊天。主控把 canonical JSON 写入私有 `PLUGIN_DATA/contracts/`，聊天正文只包含合同 ID、从 `goal` 提取的单行任务目标、上面的 marker 和一行短引用：
+
+```text
+Task goal: <单行任务目标摘要>
+Execution contract reference: sha256:<64 位小写十六进制摘要>
+```
+
+整段可见消息最多 599 个 UTF-8 字节。超长 goal 会在完整字符边界截断并加省略号；换行会折叠，JSON 括号会被中和，当前 owned worktree 的精确路径会在渲染前替换。
+
+Hook 在创建 session state 前核对引用格式、1 MiB 大小上限、SHA-256、合同 ID、目标 session、V2 active ownership 与实时 Git 基线。artifact 缺失、超限、格式错误、被篡改或绑定不一致都会停止，不会留下半激活状态；reference 与 inline JSON 同时出现也会拒绝。
+
+完整合同仍包含合同版本和稳定 ID、目标、范围、决定、非目标、禁止操作、授权模型、真实 Git 基线、稳定计划、允许调整、升级条件、验证预算和验收标准。旧版 inline V1 继续兼容。只有主控与执行位于不同宿主、无法写入目标 `PLUGIN_DATA` 时，才使用明确标注并折叠的 inline fallback；同一宿主 artifact 校验失败不能用 fallback 绕过。
 
 普通会话没有收到合法标记时，Hooks 保持无状态并成功退出，不应影响日常聊天。
 
@@ -137,15 +150,15 @@ CODEX_EXECUTION_GUARD_CONTRACT_V1
 - 它属于已批准验收标准。
 - 它直接阻止下一步继续。
 
-未来加固、理论风险、可选能力、额外哈希、指纹或通用门禁只记录为待办。相同命令、结果、Git 状态、当前步骤和验收目标没有变化时，重复运行不会被记成新进展。
+除已批准的私有合同摘要外，未来加固、理论风险、可选能力、额外哈希、指纹或通用门禁只记录为待办。相同命令、结果、Git 状态、当前步骤和验收目标没有变化时，重复运行不会被记成新进展。
 
 需要新步骤、扩大范围、改变验收、使用未授权模型或执行禁止操作时，执行会话登记证据并返回主控，不自行改合同。
 
 ## 11. 上下文压缩与恢复
 
-压缩前，Hooks 保存已经结构化的状态。恢复或重新进入后，只注入继续执行所需的信息：合同 ID 和目标、模型路由、范围、决定、非目标、禁止操作、当前步骤、完整计划与验收状态、Git 身份、允许偏差和简短证据。
+压缩前，Hooks 保存已经结构化的状态。恢复或重新进入后，在私有 Hook 上下文中注入全部合同边界、当前完整计划与验收数组、Git 身份、允许偏差、升级和已有证据；插件源码不再按字符数静默截断这些字段。
 
-恢复后会再次核对 Git 现场。插件不依赖已经失真的聊天摘要重新猜任务，也不会重放完整规划记录。
+恢复后会再次核对 Git 现场。插件不依赖已经失真的聊天摘要重新猜任务，也不会重放完整规划记录。真实宿主若另有上下文上限，必须单独报告，fixture 通过不能代替该项 Host 验证。
 
 ## 12. 完成与收据
 
@@ -186,7 +199,15 @@ codex plugin add codex-execution-guard@codex-execution-guard
 
 ### 只拿到了 `clientThreadId`
 
-任务仍在排队。继续等待宿主返回真实 `threadId` 和工作环境，不能发送受控合同或开始实现。
+任务仍在排队。已有 claim 保持 `reconcile_only`；继续等待宿主返回唯一真实 `threadId` 和工作环境，不能再次调用创建工具、发送受控合同或开始实现。
+
+### `create_thread` 报错或超时
+
+不要重试。该调用可能已经在宿主产生副作用。重新读取同一 iteration 的 claim 会得到 `reconcile_only`，随后只检查原生任务列表：恰好一个候选才继续 bootstrap；零个或多个候选都停止并交回人工判断。
+
+### 合同引用无法激活
+
+先检查目标 session 是否使用同一个 `PLUGIN_DATA`，V2 registry 是否仍为 active，以及 worktree、分支和 `HEAD` 是否与 artifact 一致。缺失或被改动的 artifact 需要主控根据当前 active ownership 重新 stage，不能粘贴旧 JSON 绕过。
 
 ### 实际模型无法核对
 

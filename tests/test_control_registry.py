@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import multiprocessing
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +17,9 @@ CONTROL_SCRIPT = (
 EXECUTION_SCRIPT = (
     ROOT / "plugins" / "codex-execution-guard" / "scripts" / "execution_guard.py"
 )
+SCRIPTS = str(CONTROL_SCRIPT.parent)
+if SCRIPTS not in sys.path:
+    sys.path.insert(0, SCRIPTS)
 
 
 def load_module(name: str, path: Path) -> Any:
@@ -80,11 +84,61 @@ def create_after_observing_lock_attempt(
         write_complete.set()
 
 
+def claim_with_paused_atomic_write(
+    registry_path: str,
+    claim: dict[str, str],
+    lock_held: Any,
+    release_first: Any,
+    results: Any,
+) -> None:
+    real_atomic_write = control.atomic_write
+
+    def paused_atomic_write(path: Path, registry: dict[str, Any]) -> None:
+        lock_held.set()
+        if not release_first.wait(10):
+            raise RuntimeError("Timed out waiting to release the first creation claimant.")
+        real_atomic_write(path, registry)
+
+    control.atomic_write = paused_atomic_write
+    try:
+        outcome = control.IterationRegistry(Path(registry_path)).claim(**claim)
+        results.put(("first", outcome["action"]))
+    except BaseException as exc:
+        results.put(("first", "error", repr(exc)))
+        raise
+
+
+def claim_after_observing_lock_attempt(
+    registry_path: str,
+    claim: dict[str, str],
+    lock_attempted: Any,
+    claim_complete: Any,
+    results: Any,
+) -> None:
+    real_flock = control.fcntl.flock
+
+    def observed_flock(file_descriptor: int, operation: int) -> None:
+        if operation == control.fcntl.LOCK_EX:
+            lock_attempted.set()
+        real_flock(file_descriptor, operation)
+
+    control.fcntl.flock = observed_flock
+    try:
+        outcome = control.IterationRegistry(Path(registry_path)).claim(**claim)
+        results.put(("second", outcome["action"]))
+    except BaseException as exc:
+        results.put(("second", "error", repr(exc)))
+        raise
+    finally:
+        claim_complete.set()
+
+
 class ControlRegistryTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
-        self.path = self.root / "private" / "iterations.json"
+        self.data = self.root / "plugin-data"
+        self.path = self.data / "control" / "iterations.json"
         self.registry = control.IterationRegistry(self.path)
         self.head_a = "a" * 40
         self.head_b = "b" * 40
@@ -105,6 +159,77 @@ class ControlRegistryTests(unittest.TestCase):
         }
         record.update(changes)
         return record
+
+    def contract(self, iteration: str = "feature-v1") -> dict[str, Any]:
+        return {
+            "contract_version": 1,
+            "contract_id": iteration,
+            "role": "execution",
+            "goal": "Implement the approved behavior without exposing the control transcript",
+            "scope": ["plugins/codex-execution-guard/**", "tests/**"],
+            "decisions": [
+                f"Frozen decision {index}: " + ("bounded private context " * 12)
+                for index in range(24)
+            ],
+            "non_goals": ["Remote publication", "Host-internal task creation changes"],
+            "forbidden_operations": ["push", "pull-request", "tag", "release", "deploy"],
+            "authorized_models": ["gpt-5.6-sol/high"],
+            "selected_model": "gpt-5.6-sol/high",
+            "route_reason": "Frozen cross-module fixture",
+            "baseline": {
+                "worktree": str(self.root / iteration),
+                "branch": f"codex/{iteration}",
+                "head": self.head_a,
+                "require_clean": True,
+            },
+            "plan": [
+                {
+                    "id": f"P{index}",
+                    "step": f"P{index} " + ("Preserve this exact approved step boundary " * 8),
+                    "status": "in_progress" if index == 1 else "pending",
+                }
+                for index in range(1, 9)
+            ],
+            "allowed_adjustments": ["Internal names only"],
+            "escalation_conditions": ["Scope or acceptance changes"],
+            "validation_budget": {
+                "development": ["python3 -m unittest tests.test_control_registry -v"],
+                "final": ["python3 -m unittest discover -s tests -v"],
+            },
+            "acceptance": [
+                {
+                    "id": f"A{index}",
+                    "criterion": f"Acceptance {index}: " + ("retain exact evidence text " * 8),
+                    "status": "pending",
+                }
+                for index in range(1, 7)
+            ],
+        }
+
+    def claim(self, iteration: str = "feature-v1") -> dict[str, str]:
+        return {
+            "iteration_id": iteration,
+            "project_id": "project-1",
+            "title": f"Implement {iteration}",
+        }
+
+    def bootstrap_report(
+        self,
+        iteration: str = "feature-v1",
+        **changes: Any,
+    ) -> dict[str, Any]:
+        report: dict[str, Any] = {
+            "thread_id": f"thread-{iteration}",
+            "host_id": "host-local",
+            "title": f"Implement {iteration}",
+            "worktree": str(self.root / iteration),
+            "linked_worktree": True,
+            "branch": f"codex/{iteration}",
+            "head": self.head_a,
+            "status": "",
+        }
+        report.update(changes)
+        return report
 
     def test_create_read_update_reuse_and_close(self) -> None:
         created = self.registry.create(self.record())
@@ -207,6 +332,207 @@ class ControlRegistryTests(unittest.TestCase):
                 if process.is_alive():
                     process.terminate()
                     process.join(5)
+
+    def test_creation_claim_is_the_only_create_permission_across_uncertain_outcomes(self) -> None:
+        native_create_calls: list[str] = []
+
+        first = self.registry.claim(**self.claim())
+        if first["action"] == "create_once":
+            native_create_calls.append("reported-error-after-side-effect")
+
+        for incident in ("clientThreadId", "error", "timeout", "crash", "reload"):
+            with self.subTest(incident=incident):
+                resumed = control.IterationRegistry(self.path).claim(**self.claim())
+                self.assertEqual(resumed["action"], "reconcile_only")
+                self.assertEqual(resumed["record"]["status"], "claimed")
+
+        self.assertEqual(native_create_calls, ["reported-error-after-side-effect"])
+
+    def test_concurrent_creation_claims_authorize_exactly_one_native_create(self) -> None:
+        context = multiprocessing.get_context("spawn")
+        lock_held = context.Event()
+        lock_attempted = context.Event()
+        release_first = context.Event()
+        second_complete = context.Event()
+        results = context.Queue()
+        claim = self.claim()
+        first = context.Process(
+            target=claim_with_paused_atomic_write,
+            args=(str(self.path), claim, lock_held, release_first, results),
+        )
+        second = context.Process(
+            target=claim_after_observing_lock_attempt,
+            args=(str(self.path), claim, lock_attempted, second_complete, results),
+        )
+        try:
+            first.start()
+            self.assertTrue(lock_held.wait(5), "first claimant never reached its locked write")
+            second.start()
+            self.assertTrue(lock_attempted.wait(5), "second claimant never attempted the process lock")
+            self.assertFalse(
+                second_complete.wait(0.25),
+                "second claimant completed while the first process still held the registry lock",
+            )
+            release_first.set()
+            first.join(10)
+            second.join(10)
+            self.assertEqual(first.exitcode, 0)
+            self.assertEqual(second.exitcode, 0)
+            outcomes = {results.get(timeout=2), results.get(timeout=2)}
+            self.assertEqual(
+                outcomes,
+                {("first", "create_once"), ("second", "reconcile_only")},
+            )
+        finally:
+            release_first.set()
+            for process in (first, second):
+                if process.pid is None:
+                    continue
+                process.join(1)
+                if process.is_alive():
+                    process.terminate()
+                    process.join(5)
+
+    def test_finalize_claim_stops_on_zero_multiple_or_queued_candidates(self) -> None:
+        self.registry.claim(**self.claim())
+        cases = (
+            ([], "found 0"),
+            ([self.bootstrap_report(), self.bootstrap_report(thread_id="thread-duplicate")], "found 2"),
+            ([{"client_thread_id": "queued-only"}], "not a real threadId"),
+        )
+        for candidates, message in cases:
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(control.ControlPlaneError, message):
+                    self.registry.finalize_claim("feature-v1", candidates=candidates)
+                self.assertEqual(self.registry.read("feature-v1")["status"], "claimed")
+                self.assertEqual(
+                    self.registry.claim(**self.claim())["action"],
+                    "reconcile_only",
+                )
+
+    def test_claimed_record_reuse_update_and_close_fail_with_controlled_errors(self) -> None:
+        self.registry.claim(**self.claim())
+
+        with self.assertRaisesRegex(control.ControlPlaneError, "not active.*claimed"):
+            self.registry.reuse("feature-v1")
+        with self.assertRaisesRegex(control.ControlPlaneError, "not active.*claimed"):
+            self.registry.update(
+                "feature-v1",
+                expected_baseline=self.head_a,
+                changes={"title": "must not apply"},
+            )
+        with self.assertRaisesRegex(control.ControlPlaneError, "claimed, not active"):
+            self.registry.close("feature-v1", expected_baseline=self.head_a)
+
+        self.assertEqual(self.registry.read("feature-v1")["status"], "claimed")
+
+    def test_finalize_claim_is_atomic_idempotent_and_rejects_conflicting_ownership(self) -> None:
+        self.registry.claim(**self.claim())
+        report = self.bootstrap_report()
+        active = self.registry.finalize_claim("feature-v1", candidates=[report])
+        self.assertEqual(active["status"], "active")
+        self.assertEqual(active["thread_id"], report["thread_id"])
+        self.assertEqual(active, self.registry.finalize_claim("feature-v1", candidates=[report]))
+        self.assertEqual(self.registry.claim(**self.claim())["action"], "reconcile_only")
+
+        conflict = self.bootstrap_report(thread_id="thread-other")
+        with self.assertRaisesRegex(control.ControlPlaneError, "different ownership"):
+            self.registry.finalize_claim("feature-v1", candidates=[conflict])
+        self.assertEqual(self.registry.read("feature-v1"), active)
+
+    def test_next_locked_write_migrates_v1_without_losing_active_records(self) -> None:
+        legacy = {
+            "registry_version": 1,
+            "iterations": {"legacy-v1": self.record("legacy-v1")},
+        }
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(json.dumps(legacy), encoding="utf-8")
+        self.assertEqual(self.path, self.data / "control" / "iterations.json")
+        self.assertFalse((self.data / "iterations.json").exists())
+
+        claimed = self.registry.claim(**self.claim("feature-v1"))
+
+        self.assertEqual(claimed["action"], "create_once")
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["registry_version"], 2)
+        self.assertEqual(set(persisted["iterations"]), {"legacy-v1", "feature-v1"})
+        self.assertEqual(
+            persisted["iterations"]["legacy-v1"],
+            control.normalize_record(legacy["iterations"]["legacy-v1"]),
+        )
+
+    def test_real_v1_control_layout_migrates_in_place_then_stages_reference(self) -> None:
+        legacy_record = self.record("legacy-v1")
+        self.path.parent.mkdir(parents=True)
+        self.path.write_text(
+            json.dumps(
+                {
+                    "registry_version": 1,
+                    "iterations": {"legacy-v1": legacy_record},
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        active = self.registry.finalize_claim(
+            "legacy-v1",
+            candidates=[self.bootstrap_report("legacy-v1")],
+        )
+        handoff = control.stage_contract_handoff(
+            plugin_data=self.data,
+            registry=self.registry,
+            iteration_id="legacy-v1",
+            target_session_id=active["thread_id"],
+            contract=self.contract("legacy-v1"),
+        )
+
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["registry_version"], 2)
+        self.assertEqual(persisted["iterations"]["legacy-v1"]["host_id"], "host-local")
+        self.assertFalse((self.data / "iterations.json").exists())
+        self.assertIn("Task goal: Implement the approved behavior", handoff["prompt"])
+        self.assertTrue(Path(handoff["artifact_path"]).is_file())
+
+    def test_default_same_host_handoff_is_short_and_keeps_contract_private(self) -> None:
+        record = self.registry.create(self.record(host_id="host-local"))
+        contract = self.contract()
+        goal_prefix = "Prevent automatic duplicate task creation and keep handoffs readable"
+        private_worktree = str(self.root / "feature-v1")
+        contract["goal"] = (
+            goal_prefix + f" in {private_worktree}\n" + ("安全交付 " * 300)
+        )
+        inline = f"{execution.MARKER}\n{json.dumps(contract, ensure_ascii=False)}"
+        self.assertGreater(len(inline.encode("utf-8")), 600)
+
+        handoff = control.stage_contract_handoff(
+            plugin_data=self.data,
+            registry=self.registry,
+            iteration_id=record["iteration_id"],
+            target_session_id=record["thread_id"],
+            contract=contract,
+        )
+
+        visible = handoff["prompt"]
+        self.assertLess(len(visible.encode("utf-8")), 600)
+        self.assertIn("Task goal: " + goal_prefix, visible)
+        self.assertEqual(len([line for line in visible.splitlines() if line.startswith("Task goal:")]), 1)
+        self.assertNotIn(json.dumps(contract, ensure_ascii=False), visible)
+        self.assertNotIn("[", visible)
+        self.assertNotIn("{", visible)
+        self.assertNotIn(private_worktree, visible)
+        self.assertIn("the approved worktree", visible)
+        self.assertIn("sha256:", visible)
+        self.assertTrue(Path(handoff["artifact_path"]).is_file())
+
+    def test_cross_host_inline_fallback_is_explicitly_labeled_and_v1_compatible(self) -> None:
+        contract = self.contract()
+
+        fallback = control.folded_inline_handoff(contract)
+
+        self.assertIn("Target PLUGIN_DATA is unavailable across hosts", fallback)
+        self.assertIn("<details>", fallback)
+        self.assertIn("Execution contract inline fallback (cross-host)", fallback)
+        self.assertEqual(execution.parse_contract(fallback), contract)
 
     def test_create_reuse_decision_table_stops_ambiguity(self) -> None:
         cases = {

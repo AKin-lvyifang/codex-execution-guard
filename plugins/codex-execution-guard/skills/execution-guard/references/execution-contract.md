@@ -2,7 +2,7 @@
 
 ## Marker and shape
 
-Use this marker on its own line, followed by one JSON object:
+Use this marker on its own line:
 
 ```text
 CODEX_EXECUTION_GUARD_CONTRACT_V1
@@ -10,16 +10,31 @@ CODEX_EXECUTION_GUARD_CONTRACT_V1
 
 The line must contain exactly that marker. Mentioning the marker inline does not activate the guard.
 
+The default same-host handoff keeps the complete contract out of visible chat. Control stores one canonical artifact under target `PLUGIN_DATA/contracts/` and sends a bounded single-line summary of `goal`, followed by the marker and reference:
+
+```text
+Execution Guard is ready for contract feature-slug-v1.
+Task goal: <single-line goal summary>
+CODEX_EXECUTION_GUARD_CONTRACT_V1
+Execution contract reference: sha256:<64 lowercase hexadecimal characters>
+```
+
+The entire visible prompt is capped at 599 UTF-8 bytes. Long goals are truncated on a character boundary with an ellipsis; newlines are folded, JSON brackets are neutralized, and the exact owned worktree path is replaced before rendering.
+
+The Hook accepts the reference only when its format, size, SHA-256, contract ID, target session, active V2 ownership, and Git baseline all match before session state is created. A prompt containing both a reference and inline JSON is ambiguous and fails closed.
+
+Inline V1 JSON remains compatible. Use it by default only for the labeled folded-inline cross-host fallback when control cannot write target `PLUGIN_DATA`; do not silently fall back after a missing, malformed, oversized, or tampered same-host artifact.
+
 ## Two-stage handoff
 
 When the control task does not yet know the real execution task, worktree, branch, or HEAD, follow [control-orchestration.md](control-orchestration.md) and:
 
-1. Resolve create versus reuse, select the execution model from host-advertised and authorized evidence, and create at most the one allowed execution task.
+1. Resolve create versus reuse, select the execution model from host-advertised and authorized evidence, and atomically claim a new iteration before any native create call.
 2. Send a bootstrap prompt without the contract marker. Authorize only establishing or checking the unique feature branch and reporting `cwd`, worktree identity, branch, `HEAD`, and status. Explicitly forbid implementation, plan changes, delegation, and additional tasks or worktrees.
-3. Wait for a real `threadId`; receive the real environment report in the control task, validate it, persist ownership, and compile it into `baseline`.
-4. Send the exact marker line plus the complete contract to activate guarded execution.
+3. Reconcile native state without retrying create. Continue only after exactly one real `threadId` and one verified environment report can atomically finalize the claim to active ownership.
+4. Compile `baseline`. On the same host, stage the complete canonical contract privately and send the marker plus short reference. Use the labeled folded-inline fallback only when target `PLUGIN_DATA` is unavailable across hosts.
 
-If the current task is already the intended worktree with a confirmed real task identity, branch, and HEAD, skip bootstrap and activate the complete contract directly. Never send a contract with a `clientThreadId` or guessed baseline values.
+If the current task is already the intended worktree with confirmed active ownership, branch, and `HEAD`, skip bootstrap and stage the complete contract directly. Never send a contract with a `clientThreadId` or guessed baseline values.
 
 The object must contain:
 
@@ -59,6 +74,8 @@ The object must contain:
 ```
 
 Use absolute paths only in a live contract. Do not commit personal paths, credentials, transcripts, or private project names in plugin files or examples.
+
+Referenced contract IDs use 1–128 ASCII letters, digits, dots, underscores, or hyphens. A canonical artifact may be at most 1 MiB. Its envelope binds the contract to the target session and the exact active ownership snapshot; changing either requires a newly staged artifact and reference.
 
 ## Compiler rules
 

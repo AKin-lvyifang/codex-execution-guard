@@ -4,11 +4,13 @@
 
 For a guarded execution:
 
-1. Report the selected model route in one line.
-2. Run read-only checks for `pwd`, worktree identity, current branch, `HEAD`, and Git status.
-3. Compare the results with `baseline`. Stop on a material mismatch.
-4. Call `update_plan` with the complete ordered `plan` array. Copy each `step` exactly; change only allowed statuses. Keep at most one `in_progress`.
-5. Begin writes only after the plan call succeeds and the Hook reports readiness.
+1. Resolve the private reference, when present, before creating session state. Missing, oversized, malformed, tampered, wrong-session, inactive-ownership, or wrong-baseline artifacts stop without partial activation.
+2. Receive the complete contract, exact plan, and exact acceptance in private Hook context; visible chat contains only the short reference during the default same-host path.
+3. Report the selected model route in one line.
+4. Run read-only checks for `pwd`, worktree identity, current branch, `HEAD`, and Git status.
+5. Compare the results with `baseline`. Stop on a material mismatch.
+6. Call `update_plan` with the complete ordered `plan` array. Copy each `step` exactly; change only allowed statuses. Keep at most one `in_progress`.
+7. Begin writes only after the plan call succeeds and the Hook reports readiness.
 
 The Hook independently verifies the Git baseline when it accepts the first plan registration. Before readiness it denies covered writes and allows only bounded environment inspection plus `update_plan`.
 
@@ -41,7 +43,9 @@ Both fields are required. Escalation is not completion: the receipt retains inco
 
 ## Compaction and resume
 
-`PreCompact` persists the already-structured checkpoint. `SessionStart` on `resume` or `compact` restores the contract ID, goal, selected model, scope, decisions, non-goals, forbidden operations, current step, approved IDs and statuses, Git baseline/current identity, deviations, and concise evidence within the configured context boundary. Re-check Git state before resuming writes. Never reconstruct scope from the lossy transcript.
+`PreCompact` persists the already-structured checkpoint. `SessionStart` on `resume` or `compact` restores every contract boundary plus the exact current plan and acceptance arrays without source-level truncation. It also restores Git baseline/current identity, deviations, escalation, and recorded evidence. Re-check Git state before resuming writes. Never reconstruct scope from the lossy transcript.
+
+Fixture output proves that the plugin source does not truncate these fields. A host may still impose an external context limit; report that separately if observed rather than silently claiming full host delivery.
 
 ## Stop and receipt
 

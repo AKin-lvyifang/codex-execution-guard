@@ -22,10 +22,10 @@ flowchart LR
     U[User] --> C[Control task]
     C --> S[execution-guard Skill]
     S --> N[Native Codex project and task tools]
-    S --> R[(Local ownership registry)]
+    S --> R[(V2 claims and task ownership)]
     N --> T[Isolated worktree execution task]
-    S --> X[Versioned execution contract]
-    X --> T
+    S --> X[(Private canonical contract artifact)]
+    X -.short SHA-256 reference.-> T
     H[Lifecycle Hooks] -.guard and recover.-> T
     T --> G[(Git worktree branch HEAD)]
     T --> E[Local commits and acceptance receipt]
@@ -38,7 +38,7 @@ flowchart LR
 
 ### Control Skill
 
-The control path owns product ambiguity, create-versus-reuse, host capability evidence, authorized model routing, native Codex project and task calls, real `threadId` readiness, worktree and baseline acquisition, ownership persistence, and contract compilation.
+The control path owns product ambiguity, create-versus-reuse, host capability evidence, authorized model routing, a durable one-shot claim before creation, one native create call, task reconciliation, real `threadId` readiness, worktree and baseline acquisition, atomic ownership finalization, and private contract staging.
 
 Control never uses a local helper to fabricate a Codex task. The local registry records identities already obtained from native tools.
 
@@ -52,11 +52,11 @@ The execution task cannot create, fork, delegate, or hand off another task.
 
 | Event | Responsibility |
 | --- | --- |
-| `UserPromptSubmit` | Recognize and persist a valid contract. |
+| `UserPromptSubmit` | Resolve inline V1 or a private reference and validate its artifact before state creation. |
 | `PreToolUse` | Deny covered writes until environment and plan registration are ready. |
 | `PostToolUse` | Record plan transitions and meaningful validation evidence. |
 | `PreCompact` | Persist the already-structured checkpoint. |
-| `SessionStart` | Restore concise state after resume or compaction. |
+| `SessionStart` | Restore every contract boundary and exact plan and acceptance state after resume or compaction. |
 | `Stop` | Continue incomplete work and allow completion or a valid escalation. |
 
 An ordinary session without the marker remains fail-open: no guard state is created and tools are not blocked.
@@ -65,21 +65,31 @@ An ordinary session without the marker remains fail-open: no guard state is crea
 
 When control creates a new worktree task, it does not yet know the real path, branch, or `HEAD`. A contract cannot safely guess them.
 
-Stage one sends a marker-free bootstrap that permits only the unique branch setup and environment report. `clientThreadId` remains queue state. Control waits for the real `threadId`, validates the report and clean status, and persists ownership.
+Stage one atomically claims the iteration in the V2 registry, then makes one native create call with a marker-free bootstrap. A `clientThreadId`, error, or timeout never renews creation permission; every later entry reconciles. Zero or multiple candidates stop. Exactly one real `threadId` may continue to environment verification.
 
-Stage two sends the marker and complete contract. The execution task compares the real baseline, registers the plan, and begins writes. This order prevents a contract from targeting an environment that does not exist.
+Stage two atomically finalizes the verified candidate to active ownership, stores the canonical contract in target-host private `PLUGIN_DATA`, and sends only the marker plus a short SHA-256 reference. The Hook validates the artifact, ownership, and live baseline before state creation, then the executor registers the plan. This prevents both a guessed environment and oversized JSON in visible chat.
 
 ## Local ownership registry
 
-`control_plane.py` stores iteration records at one explicitly selected private path outside the repository. A record contains project, real task, title, worktree, branch, full baseline, and active or closed status.
+`control_plane.py` keeps V2 records at the established target-host private path `PLUGIN_DATA/control/iterations.json`. A `claimed` record contains only iteration, project, and title—never `clientThreadId`, real task, or Git identity. `active` adds host, real thread, worktree, branch, and full baseline. `closed` retains that ownership snapshot.
 
 Mutation uses a stable sidecar process lock, reload and validation after lock acquisition, a lock held across the complete read-modify-write transaction, and atomic file replacement. Concurrent control tasks therefore cannot overwrite committed records with stale snapshots. Corrupt JSON, duplicate ownership, incomplete records, and stale baselines stop without overwrite.
 
-No checksum or fingerprint layer is added because process locking, validation, and atomic replacement satisfy the current threat boundary.
+The first claim returns the one `create_once`; every later claim permanently returns `reconcile_only`. Claims do not clear or expire, so errors, timeouts, crashes, and reloads cannot authorize a second create. V1 remains readable and migrates as a unit on the next locked write.
+
+The registry itself adds no checksum because locking, structural validation, and atomic replacement cover its concurrency boundary. SHA-256 is limited to the contract artifact below, where reproduced visible-contract and prompt-binding failures establish a concrete integrity boundary.
+
+## Private contract handoff
+
+`contract_protocol.py` wraps the complete contract and active ownership in canonical JSON bound to contract ID, target session, host, thread, worktree, branch, and baseline. The artifact is limited to 1 MiB, named by its content SHA-256, and stored under `PLUGIN_DATA/contracts/`.
+
+Visible chat receives the contract ID, a single-line `goal` summary under a 599-byte total UTF-8 cap, the activation marker, and one digest reference. Before session state exists, the Hook validates format, size, hash, contract ID, session, V2 active ownership, contract baseline, and live Git. Any mismatch fails closed, as does a prompt containing both reference and inline JSON.
+
+Inline V1 remains compatible. The explicitly labeled folded-inline fallback is only for cross-host control that cannot write target `PLUGIN_DATA`; a same-host artifact failure never silently downgrades.
 
 ## Execution state
 
-`execution_guard.py` persists the session contract, environment readiness, plan and acceptance state, current Git identity, evidence, and escalation. State uses local atomic JSON replacement.
+`execution_guard.py` persists the session contract, environment readiness, plan and acceptance state, current Git identity, evidence, and escalation. State uses local atomic JSON replacement. Activation and compact/resume private Hook context carries every contract boundary plus the exact current plan and acceptance arrays without source-level character truncation.
 
 The plugin does not store full transcripts, credentials, telemetry, or remote account data. Absolute paths belong only to the live local contract and must not be committed to examples or source.
 
@@ -106,6 +116,8 @@ Selection must be inside the intersection of the first two. Acceptance at task c
 - Local state errors do not affect an ordinary unmarked session.
 - A baseline mismatch in an active contract stops covered writes and returns a concrete recovery message.
 - Registry and native-task disagreement returns to control.
+- A claimed create never retries after error, timeout, or queue state; reconciliation with zero or multiple candidates stops.
+- A missing, oversized, tampered, or wrongly bound private contract creates no partial session state and never silently falls back inline.
 - Missing product decisions, new plan IDs, or changed acceptance return to control.
 - A host that cannot expose a real task and environment identity cannot start guarded execution.
 
