@@ -1,6 +1,6 @@
 {
   "name": "codex-execution-guard",
-  "version": "0.2.1+codex.20260810121740",
+  "version": "0.2.1+codex.20260811045939",
   "description": "Control and execute one bounded Codex implementation iteration.",
   "author": {
     "name": "AKin-lvyifang",
