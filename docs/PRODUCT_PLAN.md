@@ -2,7 +2,7 @@
 
 ## 1. Outcome
 
-Turn implementation authorization in a project control task into one durable iteration owner and one bounded execution contract that the correct Codex task can implement in one worktree, with explicit progress, recovery after compaction, and evidence-based completion.
+Turn implementation authorization in a project control task into one durable feature-chain owner and bounded execution contracts that the correct Codex tasks can continue in stable worktrees, with explicit progress, recovery after compaction, and evidence-based completion.
 
 The product is not a replacement for native Plan mode or native task tools. It governs task ownership and the transition from planning to execution.
 
@@ -11,7 +11,7 @@ The product is not a replacement for native Plan mode or native task tools. It g
 Reliable agent delivery requires four durable elements:
 
 1. Approved intent: goal, scope, decisions, non-goals, authorization, and acceptance criteria.
-2. Isolated state: one execution task, one worktree, and one feature branch per iteration.
+2. Isolated state: one reusable implementation task, worktree, and branch per feature chain, plus at most one acceptance lane when isolation is required.
 3. Recoverable progress: stable plan step identifiers, current status, deviations, and validation evidence.
 4. A bounded exit rule: completion is judged against the approved contract, not newly invented gates.
 
@@ -31,7 +31,7 @@ Primary flow:
 6. Control compiles the approved decisions plus baseline into canonical JSON under private target `PLUGIN_DATA` and sends only a short SHA-256 reference in visible chat.
 7. The Hook validates artifact format, size, hash, contract ID, session, active ownership, and live baseline before state creation. The execution task then registers the approved steps in `update_plan` before writing code.
 8. The task implements the contract, records only relevant evidence, and survives compaction or resume without source-level truncation of contract boundaries, plan, or acceptance.
-9. The task returns a concise execution receipt; control later closes the mapping after acceptance or merge.
+9. The task returns a concise execution receipt. Ownership stays active through completion, acceptance failure, and escalation; control closes every lane only after the feature chain is explicitly merged or cancelled.
 
 ## 4. Four-layer architecture
 
@@ -49,7 +49,7 @@ The trigger does not embed tool order, model policy, registry schema, or lifecyc
 
 The public Skill's control path owns create-versus-reuse, live host capability evidence, model routing, the locked pre-create claim, one Codex-native create call, queued/error reconciliation without retry, title and worktree acquisition, detached-HEAD repair, baseline validation, atomic ownership finalization, private contract staging, and short-reference activation. Any missing or ambiguous identity stops before implementation.
 
-Same goal, scope, and acceptance reuse the active task, including its fixes, adjustments, tests, and documentation. Closed or merged iterations, independent user value, and new acceptance criteria create a new task.
+The same feature chain reuses one implementation lane for implementation, optimization, tests, documentation, and failed-acceptance fixes. Acceptance detail and rechecks do not create new iterations. Only a concrete isolation need permits one deterministic acceptance lane, which every later recheck reuses. Independent user value or a known feature chain that restarts after explicit merge or cancellation creates new ownership; ambiguous evidence stops in control.
 
 ### 4.3 Execution layer
 
@@ -98,9 +98,11 @@ Model availability varies by host. Use current native tool schema or explicit ho
 ### 5.3 Execution ownership
 
 - A project control task owns planning, decisions, model routing, and final acceptance.
-- An execution task owns implementation, local verification, and the execution receipt.
-- One iteration uses one visible execution task, one worktree, and one feature branch.
+- One implementation task owns the feature chain's code changes, local verification, and execution receipts.
+- The feature chain reuses one visible implementation task, one worktree, and one feature branch.
+- A concrete isolation requirement may add one deterministic acceptance task, worktree, and branch; every later recheck reuses that lane, while code fixes return to implementation.
 - The execution task must never create, fork, or hand off another task for the same iteration.
+- Completion receipts, acceptance failures, escalations, and phase closeout keep ownership active. Only explicit `merged` or `cancelled` outcomes close it.
 - Remote push, PR, CI, tag, and release are outside the guarded local execution path.
 
 ### 5.4 Plan registration and anti-expansion
@@ -144,6 +146,8 @@ Use opt-in lifecycle hooks for guarded execution sessions:
 - `Stop`: continue only when an approved step or acceptance item remains incomplete; otherwise allow a receipt.
 
 Hooks must remain inert in ordinary chats and sessions without an active contract marker.
+
+A completed or escalated contract is terminal and write-locked. Plain-language follow-ups cannot reopen writes. Control may continue the same task only with the same `contract_id`, worktree, and branch through a private reference that revalidates active ownership and the refreshed Git baseline. The prior terminal state is content-addressed before the revised state is installed atomically; failed installation preserves the locked prior state and one reusable archive.
 
 ### 5.8 Execution receipt
 
@@ -210,6 +214,14 @@ Resolution: `clientThreadId` is only setup state. Control waits for a real `thre
 
 Resolution: persist `claimed` before the native call. Only the first locked claim returns `create_once`; later claims are permanently `reconcile_only`. Errors, timeouts, crashes, reloads, and `clientThreadId` never clear the claim. Reconciliation continues only for exactly one candidate and never archives ambiguous candidates automatically.
 
+### One feature produces endless acceptance worktrees
+
+Resolution: freeze one feature-chain key, derive one deterministic implementation iteration ID, and derive a single acceptance ID only when isolation is required. Acceptance detail, retry, optimization, and failed-acceptance fixes resolve the same lanes. Retry-specific `acceptance-v2`, `acceptance-v3`, and timestamped IDs are forbidden by orchestration policy.
+
+### Completion either reopens writes or closes ownership too early
+
+Resolution: keep ownership active after receipts, acceptance failures, escalations, and phase closeout. Completed and escalated contracts remain write-locked. A terminal revision must use the same contract ID and a private reference that revalidates active ownership; only an explicit merged or cancelled feature chain closes its lanes.
+
 ### The complete JSON contract overwhelms visible chat
 
 Resolution: same-host control stores one canonical private artifact bound to active ownership and target session. Visible chat contains only natural language, the marker, and a short SHA-256 reference. The Hook validates format, size, hash, ID, session, ownership, contract baseline, and live Git before creating state. Inline V1 remains only as the labeled cross-host fallback.
@@ -256,7 +268,7 @@ Resolution: one focused control helper, one small shared contract protocol, and 
 
 ## 9. Acceptance scenarios
 
-1. Same-goal work and iteration maintenance reuse the active task; closed work, independent value, and new acceptance start a new iteration; ambiguity stops.
+1. Same-feature implementation, optimization, acceptance detail, recheck, failed-acceptance fix, test, and documentation reuse deterministic lanes; only independent user value or a known chain restarted after merge or cancellation creates ownership; ambiguity stops.
 2. Sequential and concurrent claims grant exactly one `create_once`; every later claim returns `reconcile_only`.
 3. An error, timeout, crash, reload, or queued `clientThreadId` cannot clear a claim or authorize another native create call.
 4. Finalize accepts exactly one real verified task, is atomic and idempotent, and stops on zero, multiple, dirty, detached, incomplete, or conflicting candidates without retry or automatic archive.
@@ -273,22 +285,18 @@ Resolution: one focused control helper, one small shared contract protocol, and 
 15. The plugin and Skill validators plus control and lifecycle fixtures pass.
 16. Fresh-host task creation, actual runtime model identity, marketplace reload, Skill discovery, Hook trust, and host-side context delivery remain explicit manual checks rather than fixture claims.
 17. No MCP configuration, server, database, network dependency, telemetry, remote Git action, personal path, live registry, contract artifact, or transcript is included in the distributable source commit.
+18. Completed and escalated contracts deny plan changes and writes until a same-contract private reference revalidates active ownership, session, worktree, branch, and baseline; inline V1 remains first-activation only.
+19. If terminal revision installation fails after archival, the prior state remains authoritative and locked. Resume, compact, and read-only validation do not mutate it, so retrying the same reference retains exactly one archive.
 
 ## 10. Implemented release scope
 
-The 0.2.0 release implements the following scope:
+The 0.3.0 release implements the following scope:
 
-1. Preserve the public `$execution-guard` entry and route control versus execution through direct references.
-2. Define deterministic ownership, native bootstrap, model evidence, and failure-stop semantics.
-3. Add the process-locked, atomically replaced local iteration registry without changing Hook authority.
-4. Add focused control and adversarial registry fixtures while preserving the earlier lifecycle behavior.
-5. Synchronize product, usage, Skill UI, and plugin interface metadata.
-6. Validate the control, lifecycle, Skill, and plugin contracts.
-7. Keep fresh-host installation, marketplace reload, Skill discovery, Hook trust, and actual runtime-model identity as explicit host checks.
-
-The current unreleased follow-up adds:
-
-1. A V2 `claimed → active → closed` registry with one-shot creation authorization, reconcile-only recovery, atomic finalize, and locked V1 migration.
-2. Canonical private contract artifacts, short visible references, strict Hook binding checks, and the labeled cross-host inline fallback.
-3. Exact activation and compact/resume context for every contract boundary, plan item, and acceptance item without plugin-side truncation.
-4. Deterministic regression fixtures and synchronized Skill, product, usage, architecture, and changelog documentation.
+1. Preserve the public `$execution-guard` entry and keep product decisions in control while execution follows one bounded contract at a time.
+2. Use a V2 `claimed → active → closed` registry with one-shot creation authorization, reconcile-only recovery, atomic finalize, locked V1 migration, and explicit merged/cancelled closure.
+3. Keep the complete same-host contract in a canonical private artifact and send visible natural language plus a short reference, with strict session, ownership, artifact, and Git-baseline checks.
+4. Accept strict native delegation envelopes and preserve a labeled inline fallback for first activation across hosts.
+5. Freeze one deterministic implementation lane per feature chain and at most one acceptance lane when isolation is required; reuse both across later optimization, fixes, and rechecks.
+6. Keep completed and escalated contracts write-locked, support verified same-contract private-reference continuation, and preserve one idempotent terminal archive across recovery events.
+7. Restore the complete contract, plan, acceptance, deviations, escalation, and evidence after compaction without plugin-side character truncation.
+8. Validate control, lifecycle, Skill, and plugin contracts while keeping marketplace reload, Hook trust, host delivery, and actual runtime-model identity as explicit host checks.

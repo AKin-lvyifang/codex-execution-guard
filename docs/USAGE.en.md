@@ -59,14 +59,16 @@ Material product ambiguity remains in control. The executor is not asked to inve
 
 | Evidence | Action |
 | --- | --- |
-| Goal, scope, and acceptance are unchanged | Reuse the active task |
-| Fix, adjustment, test, or docs for the same iteration | Reuse the active task |
-| The previous iteration is closed or merged | Create a new task |
+| The same feature keeps its goal, scope, and implementation responsibility | Reuse the implementation task |
+| Acceptance detail, recheck, optimization, failed-acceptance fix, test, or docs for the same feature | Reuse the existing task |
+| Acceptance truly needs an independent environment or responsibility | Establish at most one acceptance task, then reuse it |
+| A known feature chain was explicitly merged or cancelled and later restarts | Create a new task |
 | The work adds independent user value | Create a new task |
-| The work introduces new acceptance criteria | Create a new task |
 | Evidence is missing or contradictory | Stop in control |
 
-The V2 ownership registry remains at the established private target-host path `PLUGIN_DATA/control/iterations.json` and is never committed. A new iteration starts as `claimed` without task or Git identity, becomes `active` only after verification, and becomes `closed` only after control accepts completion or merge. A V1 file at that same path migrates in place on the next locked write.
+Before the first claim, control freezes one feature-chain key and deterministically derives `<key>-implementation`. It adds the sole `<key>-acceptance` only when acceptance must be isolated. Every later optimization, failure fix, and recheck claims the same ID; never mint `acceptance-v2`, `acceptance-v3`, or a timestamped retry. This cap is an orchestration rule, not a hard registry-schema limit.
+
+The V2 ownership registry remains at the established private target-host path `PLUGIN_DATA/control/iterations.json` and is never committed. A new lane starts as `claimed` without task or Git identity and becomes `active` only after verification. A receipt, acceptance failure, escalation, or phase closeout does not close it; only an explicit `merged` or `cancelled` outcome for the feature chain makes it `closed`. A V1 file at that same path migrates in place on the next locked write.
 
 ## 6. Select an execution model
 
@@ -85,7 +87,7 @@ If live discovery is unavailable, a local-pool fallback is allowed only when the
 ## 7. Create and verify the worktree task
 
 1. Resolve the real Git project with native Codex project tools.
-2. Persist a locked claim for the iteration in the V2 registry. The first result is one `create_once`; every later result is permanently `reconcile_only`.
+2. Use the feature chain's frozen implementation or acceptance iteration ID and persist its locked V2 claim. The first result is one `create_once`; every later result is permanently `reconcile_only`.
 3. Only for `create_once`, create one visible worktree task, with exactly one native create call.
 4. Do not retry after a task, `clientThreadId`, error, or timeout response. Reconcile through the host's status surface or bounded task lists; zero or multiple candidates stop without automatic archive.
 5. Treat `clientThreadId` only as a queue token and wait for the one real `threadId`.
@@ -116,7 +118,7 @@ The complete visible message is capped at 599 UTF-8 bytes. A long goal is trunca
 
 Before creating session state, the Hook validates reference format, the 1 MiB size limit, SHA-256, contract ID, target session, V2 active ownership, and live Git baseline. A missing, oversized, malformed, tampered, or wrongly bound artifact stops without partial activation. A prompt containing both a reference and inline JSON is rejected.
 
-The complete contract still contains version and ID, goal, scope, frozen decisions, non-goals, forbidden operations, authorized and selected model, route evidence, real Git baseline, stable plan, allowed adjustments, escalation conditions, validation budget, and stable acceptance items. Inline V1 remains compatible. Use the explicitly labeled folded-inline fallback only when control and execution are on different hosts and target `PLUGIN_DATA` cannot be staged; it must not bypass a same-host artifact failure.
+The complete contract still contains version and ID, goal, scope, frozen decisions, non-goals, forbidden operations, authorized and selected model, route evidence, real Git baseline, stable plan, allowed adjustments, escalation conditions, validation budget, and stable acceptance items. Inline V1 remains compatible only for first activation. Once a contract is completed or escalated, continuation requires a private short reference that revalidates active V2 ownership; neither inline input nor the cross-host fallback can bypass the terminal write lock. A same-host artifact failure cannot use the fallback either.
 
 In an ordinary session without a valid marker, the Hooks create no guard state and exit successfully.
 
@@ -146,6 +148,10 @@ The `Stop` Hook asks the task to continue while approved plan or acceptance item
 
 Final acceptance, local `main` integration, and every remote publishing decision remain in control.
 
+A completion receipt or valid escalation allows the executor to hand results back; it does not close task ownership. The contract becomes terminal and write-locked, so an ordinary plain-language prompt cannot authorize another `update_plan` or code write. Control may verify the same worktree and branch, refresh the new `HEAD` baseline, and send the same task a private short reference with the same `contract_id`. The Hook archives the prior terminal state before atomically starting the revised plan. If the new state write fails, the old terminal state remains authoritative, and retrying the same reference does not duplicate its archive.
+
+Control closes the feature chain's implementation and acceptance lanes only after the whole chain is explicitly merged or cancelled.
+
 ## 13. Update
 
 ```bash
@@ -154,6 +160,8 @@ codex plugin add codex-execution-guard@codex-execution-guard
 ```
 
 For a locally cloned marketplace, run `git pull --ff-only` in the repository before reinstalling. Then restart the desktop app, review changed Hooks, and verify the update in a new task. Do not use a task that was already running to prove that a new version loaded.
+
+When upgrading from `0.2.x`, an old active record may have no `host_id` and cannot directly stage a new private reference. If you will not reuse the old task, complete or close it. To continue the same task, do not close it first: reconcile exactly one real native candidate and reverify its host, `threadId`, worktree, branch, and `HEAD`. Make the registry baseline match that verified `HEAD`, then finalize the original iteration once to add the host identity. Do not create another task for the same feature to bypass this step.
 
 ## 14. Troubleshooting
 

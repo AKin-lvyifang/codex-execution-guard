@@ -4,7 +4,7 @@
 
 A local-first Codex plugin that keeps planning in a control task, sends implementation to one isolated execution task, and uses Hooks to guard plan registration, writes, context compaction, recovery, and completion.
 
-Current version: `0.2.0+codex.20260809142253` · License: [MIT](LICENSE)
+Current version: `0.3.0+codex.20260811094944` · License: [MIT](LICENSE)
 
 This is a community-maintained open-source project, not an official OpenAI product.
 
@@ -17,9 +17,10 @@ Long Codex implementation sessions often fail because execution boundaries are l
 - A detailed handoff can be compressed into a weak summary that loses steps, non-goals, and acceptance criteria.
 - A complete contract can appear as oversized JSON in visible chat and bury the human-readable handoff.
 - `create_thread` can report an error or timeout after the host already created a task; an automatic retry then creates duplicate tasks and worktrees.
+- Each acceptance pass, recheck, or optimization for one feature can be misclassified as a new iteration, leaving a growing trail of `v2` and `v3` tasks and worktrees.
 - An executor can invent new tasks, tests, or exit gates and keep spending without producing new delivery evidence.
 
-Execution Guard turns one approved iteration into a recoverable execution contract: one execution task, one worktree, one feature branch, stable plan steps, and an evidence-based receipt.
+Execution Guard keeps one feature chain in a recoverable execution lane: one reusable implementation task, worktree, and feature branch, stable plan steps, and evidence-based receipts. It adds one separate acceptance lane only when the environment or responsibility must be isolated, then reuses that lane for later rechecks.
 
 ## Five-minute setup
 
@@ -106,7 +107,8 @@ Read [Architecture and principles](docs/ARCHITECTURE.en.md) for the full design.
 
 ## Main capabilities
 
-- Create or reuse based on the same goal, scope, and acceptance criteria.
+- Create or reuse based on goal, scope, and genuinely independent user value; new acceptance detail alone no longer creates a task.
+- Reuse one implementation lane for the same feature's implementation, optimization, acceptance-failure fixes, and rechecks; add at most one reusable acceptance lane when isolation is required.
 - Persist a locked one-shot claim before `create_thread`; an error, timeout, crash, reload, or queued `clientThreadId` never grants another create call.
 - Reconcile every later claim and finalize only from exactly one real task with a complete Git identity; zero or multiple candidates stop.
 - Wait for a real `threadId`; never activate execution from a queued `clientThreadId`.
@@ -117,7 +119,8 @@ Read [Architecture and principles](docs/ARCHITECTURE.en.md) for the full design.
 - Admit only the current deliverable, an observed failure, an acceptance item, or a direct blocker into current work.
 - Treat repeated validation on unchanged code and acceptance state as duplicate evidence, not progress.
 - Restore every contract boundary, the exact plan and acceptance arrays, Git identity, and evidence after compaction or resume without source-level truncation.
-- Block premature completion and return a receipt with local commits, changed paths, validation, deviations, and unverified items.
+- Block premature completion, then keep terminal contracts write-locked and owned until a valid private-reference revision continues the same task.
+- Keep ownership active through receipts, acceptance failures, and escalations; close it only when the whole feature chain is explicitly merged or cancelled.
 
 ## Who it is for
 
@@ -158,7 +161,7 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py \
   plugins/codex-execution-guard
 ```
 
-The current fixtures cover one-shot creation claims, concurrency and reconcile-only recovery, V1 registry migration, private contract references and binding failures, Git baseline checks, exact recovery, evidence deduplication, and completion decisions. Fresh-host installation, Hook trust, and side effects inside one host call remain explicit manual checks.
+The current fixtures cover one-shot creation claims, concurrency and reconcile-only recovery, V1 registry migration, private contract references and binding failures, feature-chain reuse, terminal write locks, safe revision rollover, Git baseline checks, exact recovery, evidence deduplication, and completion decisions. Fresh-host installation, Hook trust, and side effects inside one host call remain explicit manual checks after restart.
 
 ## License
 

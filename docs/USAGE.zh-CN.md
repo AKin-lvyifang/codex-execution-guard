@@ -67,14 +67,16 @@ codex plugin add codex-execution-guard@codex-execution-guard
 
 | 现场 | 动作 |
 | --- | --- |
-| 目标、范围和验收标准不变 | 继续原任务 |
-| 原功能的修复、调整、测试或文档 | 继续原任务 |
-| 原迭代已经关闭或合并 | 创建新任务 |
+| 同一功能的目标、范围和实现责任不变 | 复用现有实现任务 |
+| 同一功能的验收细化、复验、优化、验收失败修复、测试或文档 | 复用现有任务 |
+| 验收确实需要独立环境或责任 | 最多建立一个独立验收任务，后续复验继续复用 |
+| 已知的同一功能链已经明确合并或取消，后来重新开始 | 创建新任务 |
 | 出现独立用户价值 | 创建新任务 |
-| 出现新的验收标准 | 创建新任务 |
 | 证据缺失或互相矛盾 | 停在主控决定 |
 
-V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/control/iterations.json`，不会提交进仓库。新迭代先保存不含 task/Git 身份的 `claimed` 记录，核对成功后变为 `active`，主控接受完成或合并后才变为 `closed`。同一路径里的 V1 文件会在下一次持锁写入时原地整体迁移。
+主控在第一次 claim 前固定一个功能链 key，并从它确定性地得到 `<key>-implementation`。只有验收需要隔离时才增加唯一的 `<key>-acceptance`；后续优化、失败修复和复验必须反复 claim 相同 ID，不能生成 `acceptance-v2`、`acceptance-v3` 或时间戳版本。这个上限由编排规则保证，不是 registry 数据库的硬限制。
+
+V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/control/iterations.json`，不会提交进仓库。新 lane 先保存不含 task/Git 身份的 `claimed` 记录，核对成功后变为 `active`。完成收据、验收失败、升级或阶段收口都不会关闭它；只有整条功能链明确 `merged` 或 `cancelled` 后才变为 `closed`。同一路径里的 V1 文件会在下一次持锁写入时原地整体迁移。
 
 ## 6. 选择执行模型
 
@@ -95,7 +97,7 @@ V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/con
 新迭代按以下顺序启动：
 
 1. 通过 Codex 原生项目工具找到真实 Git 项目。
-2. 在 V2 registry 中持锁 claim 当前 iteration。第一次只返回一次 `create_once`；之后永远是 `reconcile_only`。
+2. 使用该功能链已经固定的 implementation 或 acceptance iteration ID，在 V2 registry 中持锁 claim。第一次只返回一次 `create_once`；之后永远是 `reconcile_only`。
 3. 只有拿到 `create_once` 时，才创建一个左侧可见、环境类型为 worktree 的任务，而且只调用一次。
 4. 创建工具返回任务、`clientThreadId`、错误或超时后都不重试。通过宿主状态面或有界的任务列表做 reconcile；零个或多个候选都停止，不自动归档。
 5. 把 `clientThreadId` 只当成排队标识，等待唯一真实 `threadId`。
@@ -126,7 +128,7 @@ Execution contract reference: sha256:<64 位小写十六进制摘要>
 
 Hook 在创建 session state 前核对引用格式、1 MiB 大小上限、SHA-256、合同 ID、目标 session、V2 active ownership 与实时 Git 基线。artifact 缺失、超限、格式错误、被篡改或绑定不一致都会停止，不会留下半激活状态；reference 与 inline JSON 同时出现也会拒绝。
 
-完整合同仍包含合同版本和稳定 ID、目标、范围、决定、非目标、禁止操作、授权模型、真实 Git 基线、稳定计划、允许调整、升级条件、验证预算和验收标准。旧版 inline V1 继续兼容。只有主控与执行位于不同宿主、无法写入目标 `PLUGIN_DATA` 时，才使用明确标注并折叠的 inline fallback；同一宿主 artifact 校验失败不能用 fallback 绕过。
+完整合同仍包含合同版本和稳定 ID、目标、范围、决定、非目标、禁止操作、授权模型、真实 Git 基线、稳定计划、允许调整、升级条件、验证预算和验收标准。旧版 inline V1 只兼容首次激活。合同已经完成或升级后，续接必须使用能重新核验 active V2 ownership 的私有短引用；inline 或跨宿主 fallback 都不能绕过终态写锁。同一宿主 artifact 校验失败也不能用 fallback 绕过。
 
 普通会话没有收到合法标记时，Hooks 保持无状态并成功退出，不应影响日常聊天。
 
@@ -174,6 +176,10 @@ Hook 在创建 session state 前核对引用格式、1 MiB 大小上限、SHA-25
 
 最终验收、合并本地 `main` 和任何远程发布决定留在主控。
 
+完成收据或合法升级只表示执行会话可以把结果交回主控，不表示任务归属已经关闭。此时合同进入终态写锁，普通自然语言提示不能重新授权 `update_plan` 或代码写入。主控可以核对同一个 worktree 与分支，刷新新的 `HEAD` 基线，再用相同 `contract_id` 向同一任务发送新的私有短引用。Hook 会先保存旧终态，再原子启动新计划；若新 state 写入失败，旧终态继续生效，重试同一引用也不会复制归档。
+
+只有整条功能链明确合并或取消后，主控才关闭它拥有的 implementation 与 acceptance lane。
+
 ## 13. 更新插件
 
 ```bash
@@ -182,6 +188,8 @@ codex plugin add codex-execution-guard@codex-execution-guard
 ```
 
 如果使用的是本地克隆仓库，先在仓库中运行 `git pull --ff-only`，再重新安装插件。随后重启桌面应用，重新检查发生变化的 Hooks，并在新任务中验证。不要用正在运行的旧任务判断新版本是否已经加载。
+
+从 `0.2.x` 升级时，旧 active record 可能没有 `host_id`，不能直接生成新版私有短引用。如果不再续用旧任务，先完成或关闭它。若要继续原任务，不要先关闭：必须从原生任务列表找到唯一真实候选，重新核对 host、`threadId`、worktree、分支和 `HEAD`，先让 registry baseline 与已核对的 `HEAD` 一致，再对原 iteration 执行一次 finalize 补齐宿主身份。不要为了绕过这一步另建同功能任务。
 
 ## 14. 常见问题
 
