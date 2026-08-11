@@ -59,18 +59,24 @@ Codex does not automatically trust command Hooks from unmanaged plugins. Open `/
 ### 4. Add a trigger to global or project `AGENTS.md`
 
 ```text
-When the user explicitly authorizes implementation of a new feature, an independent code task, or continuation of an existing feature, the project control task must invoke $execution-guard. Task creation or reuse, model and reasoning selection, worktree and branch management, plan persistence, execution recovery, and final handoff follow that Skill. Never push, open a pull request, run remote CI, tag, release, or deploy without explicit user authorization.
+- When no matching active feature-chain ownership and control identity exists, establish that feature chain only when both are true: the current task is explicitly designated as control for the same still-pending implementation, including by a prior explicit $execution-guard invocation in its unresolved clarification chain, or the current prompt explicitly names $execution-guard; and the user approved starting or continuing a sufficiently frozen implementation in a real Git repository.
+- Explicitly naming $execution-guard still requires loading the Skill and responding in the current task. Without implementation approval or frozen boundaries, stay there without a claim, execution task, branch, or worktree. The invocation remains control-intent evidence across later clarification turns for that same still-pending implementation. Once ownership is finalized as active and implementation starts, the pending designation ends by transferring its routing identity to that exact active ownership and control chain; cancellation or replacement by an independent goal ends it without handoff.
+- A user-approved continuation, optimization, failed-acceptance repair, test, or documentation update whose active implementation ownership and native task identity match exactly reuses the original implementation lane. An isolated recheck whose existing sole approved acceptance ownership and native task identity match exactly reuses that acceptance lane. Neither requires another Guard invocation or control designation, creates a second implementation lane, or absorbs an independent goal.
+- When that exact active implementation chain has a concrete approved isolation need and no acceptance lane exists, its inherited routing identity may deterministically claim the sole <feature-chain-key>-acceptance lane without another Guard invocation or control designation. The first claim permits at most one create; later claims reconcile or reuse, and acceptance-v2, acceptance-v3, or timestamped retry lanes are forbidden.
+- Research, analysis, review, and one-off Paper, Figma, or HTML exploration stay in the current task even when they generate code or use $frontend-design; an approved production page in a real Git repository may establish a feature chain when both keys are present.
+- After new-chain qualification or an exact active-chain match, task creation or reuse, model and reasoning selection, worktree and branch management, plan persistence, execution recovery, and final handoff follow that Skill. Active chain identity ends only when the feature chain is explicitly merged or cancelled. A valid marked execution contract or persisted execution resume follows the existing execution path without restating the entry gate.
+- Never push, open a pull request, run remote CI, tag, release, or deploy without explicit user authorization.
 ```
 
 ### 5. Plan in the control task, then start
 
-Freeze product decisions, scope, steps, and acceptance criteria with a planning-capable model. Then send:
+Freeze product decisions, scope, steps, and acceptance criteria with a planning-capable model. To establish a feature chain when no matching active ownership and control identity exists, send:
 
 ```text
 The plan is approved. Start implementation with $execution-guard.
 ```
 
-Control decides whether to create or reuse a task, chooses an execution model, obtains the real worktree and Git baseline, stages the complete contract privately, and sends only its short reference to the executor.
+For a user-approved exact active-chain follow-up, do not repeat that invocation. Match implementation work to active implementation ownership and isolated rechecks to the existing acceptance ownership, always including native task identity, then reuse that lane. If a concrete approved isolation need appears and the chain has no acceptance lane, claim its deterministic acceptance ID through the inherited routing identity. Control otherwise establishes the new feature chain, chooses an execution model, obtains the real worktree and Git baseline, stages the complete contract privately, and sends only its short reference to the executor.
 
 See the [full usage guide](docs/USAGE.en.md) for installation, operation, updating, and troubleshooting.
 
@@ -78,12 +84,24 @@ See the [full usage guide](docs/USAGE.en.md) for installation, operation, updati
 
 ```mermaid
 flowchart TD
-    A[Plan and approve in the control task] --> B[Invoke execution-guard]
-    B --> C{Create or reuse}
+    A[Plan and approve in the control task] --> B{Exact active implementation chain}
+    B -->|No| C[Invoke execution-guard with both feature-chain keys]
     C --> D[Select an available authorized model]
-    D --> E[Atomically claim before creation]
+    D --> E[Claim the deterministic implementation ID]
     E --> F[Create once or reconcile only]
     F --> G[Verify threadId branch HEAD and status]
+    B -->|Yes| R[Verify active implementation ownership and native task identity]
+    R --> Q{Approved isolated acceptance route}
+    Q -->|No| U[Reuse implementation lane]
+    Q -->|Yes| AC[Resolve deterministic key-acceptance]
+    AC --> AR{Ownership result}
+    AR -->|create_once| AT[Create the sole acceptance task once]
+    AR -->|reconcile_only| AQ[Reconcile the existing acceptance claim]
+    AR -->|active| AU[Reuse the existing acceptance lane]
+    AT --> G
+    AQ --> G
+    AU --> G
+    U --> G
     G --> X[Stage the contract privately and send a short reference]
     X --> H[Register the complete update_plan]
     H --> I[Implement and validate within budget]
@@ -97,7 +115,7 @@ Control compiles the goal, scope, frozen decisions, non-goals, plan, acceptance,
 
 | Layer | Responsibility |
 | --- | --- |
-| `AGENTS.md` trigger | Defines when the plugin is mandatory without embedding the orchestration protocol in the global prompt. |
+| `AGENTS.md` trigger | Requires both keys only to establish a feature chain without matching active ownership; an exact active implementation chain reuses existing lanes or claims its sole deterministic acceptance lane without another Guard invocation. |
 | Control Skill | Decides create versus reuse, claims before creation, creates once or reconciles, selects a model, verifies Git, and stages the private handoff. |
 | Execution Skill | Compiles and executes a versioned contract, registers a stable `update_plan`, implements locally, validates, and returns evidence. |
 | Hooks | Guard marked execution sessions before writes, at plan updates, during compaction and resume, and at task stop. |
@@ -108,7 +126,8 @@ Read [Architecture and principles](docs/ARCHITECTURE.en.md) for the full design.
 ## Main capabilities
 
 - Create or reuse based on goal, scope, and genuinely independent user value; new acceptance detail alone no longer creates a task.
-- Reuse one implementation lane for the same feature's implementation, optimization, acceptance-failure fixes, and rechecks; add at most one reusable acceptance lane when isolation is required.
+- Reuse one implementation lane for an approved exact active-chain continuation, optimization, acceptance-failure fix, test, documentation update, or recheck without another Guard invocation.
+- When that active implementation chain has a concrete approved isolation need, claim its sole deterministic acceptance lane without another invocation; only the first claim may create once, and every later attempt reconciles or reuses the same lane.
 - Persist a locked one-shot claim before `create_thread`; an error, timeout, crash, reload, or queued `clientThreadId` never grants another create call.
 - Reconcile every later claim and finalize only from exactly one real task with a complete Git identity; zero or multiple candidates stop.
 - Wait for a real `threadId`; never activate execution from a queued `clientThreadId`.

@@ -38,16 +38,24 @@ codex plugin add codex-execution-guard@codex-execution-guard
 推荐把下面规则放进全局或项目 `AGENTS.md`：
 
 ```text
-当用户明确要求开始实施新功能、独立代码任务或继续既有功能时，项目主会话必须调用 $execution-guard；任务创建或复用、模型与思考强度选择、worktree 与分支管理、计划固化、执行恢复和结果收口全部以该 Skill 为准。未经用户明确授权，不得 push、创建 PR、运行远程 CI、Tag、Release 或部署。
+- 若不存在精确匹配且仍为 active 的功能链 ownership 与 control 身份，只有在以下两项同时成立时，项目主会话才可建立该功能链：当前任务已针对同一项尚未开始的实施被明确指定为 control（包括此前在该未解决澄清链中明确点名 $execution-guard），或用户当前提示明确点名 $execution-guard；且用户已批准开始或继续边界充分冻结的真实 Git 仓库实施。
+- 用户明确点名 $execution-guard 时，仍必须加载该 Skill 并在当前任务回应；若实施批准或冻结边界不足，则留在当前任务，不 claim、创建或复用执行任务，也不新建分支或 worktree。只要讨论的仍是同一项尚未开始的实施，此前的显式调用就在后续澄清轮次中继续作为 control 意图证据。ownership 完成 finalize 并进入 active 状态后才开始实施，此时 pending control 指定结束，路由身份由该 active ownership 及其 control chain 接续；用户取消或以独立目标替换时则直接结束，不发生交接。
+- 已获用户批准的继续实施、优化、验收失败修复、测试或文档更新，只有在 active implementation ownership 与原生任务身份精确匹配时，才复用原实现 lane。隔离复验则必须精确匹配已经存在的唯一验收 ownership 与原生任务身份，才能复用验收 lane。两者都无需再次点名 Guard 或指定 control，不得创建第二条实现 lane，也不得吸收独立目标。
+- 该 active implementation chain 后来出现已获批准的具体隔离需求，且尚无验收 lane 时，可沿用既有路由身份直接确定性 claim 唯一的 <feature-chain-key>-acceptance lane，无需再次点名 Guard 或指定 control。第一次 claim 最多授权创建一次；后续 claim 只 reconcile 或复用，禁止 acceptance-v2、acceptance-v3 和带时间戳的重试 lane。
+- 研究、分析、评审及一次性的 Paper、Figma、HTML 探索即使产生代码或使用 $frontend-design 也默认留在当前任务；真实仓库中的正式页面实施在两项同时满足时可以建立功能链。
+- 新功能链通过双钥匙，或后续工作通过 active chain 精确匹配后，任务创建或复用、模型与思考强度选择、worktree 与分支管理、计划固化、执行恢复和结果收口全部以该 Skill 为准。active 功能链身份只在明确 merged 或 cancelled 后结束。有效标记的执行合同或持久化执行恢复直接遵循既有 execution 路径，无需重复入口条件。
+- 未经用户明确授权，不得 push、创建 PR、运行远程 CI、Tag、Release 或部署。
 ```
 
 这条规则只负责路由。任务归属、模型路由、合同格式、恢复和停止条件都留在插件里，避免全局提示词不断变长。
 
-如果不修改 `AGENTS.md`，每次确认执行时明确发送：
+如果不修改 `AGENTS.md`，没有匹配的 active 功能链 ownership 与 control 身份、准备建立新功能链时才明确发送：
 
 ```text
 方案确认，开始执行，使用 $execution-guard。
 ```
+
+已获批且精确匹配 active chain 的后续工作不重复发送这条调用。实现工作匹配 implementation ownership，隔离复验匹配已有验收 ownership，两者都要核对原生任务身份后再复用；出现已批准的具体隔离需求时，也可沿用该链身份 claim 唯一的确定性验收 lane。
 
 ## 4. 先在主会话规划
 
@@ -69,12 +77,14 @@ codex plugin add codex-execution-guard@codex-execution-guard
 | --- | --- |
 | 同一功能的目标、范围和实现责任不变 | 复用现有实现任务 |
 | 同一功能的验收细化、复验、优化、验收失败修复、测试或文档 | 复用现有任务 |
-| 验收确实需要独立环境或责任 | 最多建立一个独立验收任务，后续复验继续复用 |
+| 精确匹配的 active implementation chain 已批准独立验收环境或责任需求 | 确定性 claim 唯一验收任务，后续复验继续复用 |
 | 已知的同一功能链已经明确合并或取消，后来重新开始 | 创建新任务 |
 | 出现独立用户价值 | 创建新任务 |
 | 证据缺失或互相矛盾 | 停在主控决定 |
 
-主控在第一次 claim 前固定一个功能链 key，并从它确定性地得到 `<key>-implementation`。只有验收需要隔离时才增加唯一的 `<key>-acceptance`；后续优化、失败修复和复验必须反复 claim 相同 ID，不能生成 `acceptance-v2`、`acceptance-v3` 或时间戳版本。这个上限由编排规则保证，不是 registry 数据库的硬限制。
+主控在第一次 claim 前固定一个功能链 key，并从它确定性地得到 `<key>-implementation`。只有精确匹配的 active implementation chain 后来出现已获批准的具体隔离需求时，才派生唯一的 `<key>-acceptance`。既有功能链身份无需再次点名 Guard 即可发起这次首次验收 claim：`create_once` 最多授权创建一次，已有 claim 只 reconcile，active 记录直接复用。后续优化、失败修复和复验必须解析到相同 ID，不能生成 `acceptance-v2`、`acceptance-v3` 或时间戳版本。这个上限由编排规则保证，不是 registry 数据库的硬限制。
+
+同一功能链的实现后续工作已经获批时，active implementation ownership 与原生任务身份必须精确匹配；隔离复验则匹配已经存在的唯一验收 ownership 与原生任务身份。匹配成功即可复用对应 lane，无需再次点名 Guard 或指定 control。尚无验收 lane 时，只有上面的已批准具体隔离路径可以建立它。功能链一旦 merged 或 cancelled 就结束该身份；独立目标必须重新建立功能链，不能继承旧映射。
 
 V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/control/iterations.json`，不会提交进仓库。新 lane 先保存不含 task/Git 身份的 `claimed` 记录，核对成功后变为 `active`。完成收据、验收失败、升级或阶段收口都不会关闭它；只有整条功能链明确 `merged` 或 `cancelled` 后才变为 `closed`。同一路径里的 V1 文件会在下一次持锁写入时原地整体迁移。
 

@@ -9,7 +9,7 @@ Execution Guard 解决的是“已经确认的实现计划怎样稳定落地”�
 可靠执行需要四种持久信息：
 
 1. 已批准意图：目标、范围、决定、非目标、授权和验收标准。
-2. 隔离现场：一个执行任务、一个 worktree、一个功能分支。
+2. 隔离现场：每条功能链一个实现任务、worktree 和分支；已批准具体隔离需求时，最多再有一条确定性验收 lane。
 3. 可恢复进度：稳定计划编号、当前状态、偏差和验证证据。
 4. 有边界的出口：按批准合同判断完成，不由执行者继续发明新门槛。
 
@@ -23,7 +23,7 @@ flowchart LR
     C --> S[execution-guard Skill]
     S --> N[Codex 原生项目与任务工具]
     S --> R[(V2 claim 与任务归属)]
-    N --> T[独立 worktree 执行任务]
+    N --> T[实现任务与可选的唯一验收 worktree 任务]
     S --> X[(私有 canonical 合同 artifact)]
     X -.SHA-256 短引用.-> T
     H[Lifecycle Hooks] -.检查与恢复.-> T
@@ -34,7 +34,7 @@ flowchart LR
 
 ### 触发层
 
-`AGENTS.md` 只规定什么时候必须调用 `$execution-guard`。它不保存工具调用顺序、模型策略、合同字段或 Hook 状态机，避免全局上下文被实现细节占满。
+`AGENTS.md` 把功能链建立与链内 lane 路由分开。没有匹配的 active 功能链 ownership 与 control 身份时，显式 control 意图与已批准、边界充分冻结的真实仓库实施必须同时成立，Control 才能建立功能链。此前的显式调用可在同一项尚未开始的实施澄清中持续作为证据；ownership 完成 finalize 并进入 active 状态后才开始实施，此时路由身份由该 active ownership 与 control chain 接续，用户取消或以独立目标替换时则无交接结束。精确匹配的 active chain 后续工作已获批准时，只有选定 lane 的 active ownership 与原生任务身份精确匹配，才无需再次点名 Guard 并复用实现 lane 或已有验收 lane。若 active implementation chain 后来出现已批准的具体隔离需求，可沿用该身份 claim 唯一的确定性验收 lane：第一次 claim 最多创建一次，后续只 reconcile 或复用，不能生成带重试后缀的 ID。功能链明确 merged 或 cancelled 后，该身份结束。只点名 Skill、研究评审和一次性 Paper、Figma、HTML 探索即使产生代码或使用 `$frontend-design`，也仍留在当前任务。触发层不保存工具调用顺序、模型策略、合同字段或 Hook 状态机。
 
 ### Control Skill
 

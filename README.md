@@ -59,18 +59,24 @@ Codex 不会自动信任非托管插件的命令型 Hooks。打开 `/hooks`，�
 ### 4. 在全局或项目 `AGENTS.md` 中加入触发规则
 
 ```text
-当用户明确要求开始实施新功能、独立代码任务或继续既有功能时，项目主会话必须调用 $execution-guard；任务创建或复用、模型与思考强度选择、worktree 与分支管理、计划固化、执行恢复和结果收口全部以该 Skill 为准。未经用户明确授权，不得 push、创建 PR、运行远程 CI、Tag、Release 或部署。
+- 若不存在精确匹配且仍为 active 的功能链 ownership 与 control 身份，只有在以下两项同时成立时，项目主会话才可建立该功能链：当前任务已针对同一项尚未开始的实施被明确指定为 control（包括此前在该未解决澄清链中明确点名 $execution-guard），或用户当前提示明确点名 $execution-guard；且用户已批准开始或继续边界充分冻结的真实 Git 仓库实施。
+- 用户明确点名 $execution-guard 时，仍必须加载该 Skill 并在当前任务回应；若实施批准或冻结边界不足，则留在当前任务，不 claim、创建或复用执行任务，也不新建分支或 worktree。只要讨论的仍是同一项尚未开始的实施，此前的显式调用就在后续澄清轮次中继续作为 control 意图证据。ownership 完成 finalize 并进入 active 状态后才开始实施，此时 pending control 指定结束，路由身份由该 active ownership 及其 control chain 接续；用户取消或以独立目标替换时则直接结束，不发生交接。
+- 已获用户批准的继续实施、优化、验收失败修复、测试或文档更新，只有在 active implementation ownership 与原生任务身份精确匹配时，才复用原实现 lane。隔离复验则必须精确匹配已经存在的唯一验收 ownership 与原生任务身份，才能复用验收 lane。两者都无需再次点名 Guard 或指定 control，不得创建第二条实现 lane，也不得吸收独立目标。
+- 该 active implementation chain 后来出现已获批准的具体隔离需求，且尚无验收 lane 时，可沿用既有路由身份直接确定性 claim 唯一的 <feature-chain-key>-acceptance lane，无需再次点名 Guard 或指定 control。第一次 claim 最多授权创建一次；后续 claim 只 reconcile 或复用，禁止 acceptance-v2、acceptance-v3 和带时间戳的重试 lane。
+- 研究、分析、评审及一次性的 Paper、Figma、HTML 探索即使产生代码或使用 $frontend-design 也默认留在当前任务；真实仓库中的正式页面实施在两项同时满足时可以建立功能链。
+- 新功能链通过双钥匙，或后续工作通过 active chain 精确匹配后，任务创建或复用、模型与思考强度选择、worktree 与分支管理、计划固化、执行恢复和结果收口全部以该 Skill 为准。active 功能链身份只在明确 merged 或 cancelled 后结束。有效标记的执行合同或持久化执行恢复直接遵循既有 execution 路径，无需重复入口条件。
+- 未经用户明确授权，不得 push、创建 PR、运行远程 CI、Tag、Release 或部署。
 ```
 
 ### 5. 在主会话中规划并开始
 
-先用适合规划的模型确认产品取舍、范围、步骤和验收标准。方案定好后发送：
+先用适合规划的模型确认产品取舍、范围、步骤和验收标准。没有匹配的 active 功能链 ownership 与 control 身份、准备建立新功能链时发送：
 
 ```text
 方案确认，开始执行，使用 $execution-guard。
 ```
 
-主控随后判断新建还是复用任务，选择执行模型，取得真实 worktree 与 Git 基线，把完整合同私有保存后，只向执行会话发送短引用。
+同一 active chain 的后续工作已获用户批准时，不重复发送这条调用。实现工作核对 active implementation ownership，隔离复验核对已有验收 ownership，两者都必须匹配原生任务身份，然后复用对应 lane。如果后来出现已获批准的具体隔离需求且还没有验收 lane，就沿用该链的路由身份 claim 确定性的验收 ID。其他情况由主控建立新功能链，选择执行模型，取得真实 worktree 与 Git 基线，把完整合同私有保存后，只向执行会话发送短引用。
 
 更完整的操作说明见 [中文使用手册](docs/USAGE.zh-CN.md)。
 
@@ -78,12 +84,24 @@ Codex 不会自动信任非托管插件的命令型 Hooks。打开 `/hooks`，�
 
 ```mermaid
 flowchart TD
-    A[主会话规划并确认方案] --> B[调用 execution-guard]
-    B --> C{新建还是复用任务}
+    A[主会话规划并确认方案] --> B{是否精确匹配 active implementation chain}
+    B -->|否| C[以功能链双钥匙调用 execution-guard]
     C --> D[选择宿主可用且已授权的模型]
-    D --> E[创建前原子 claim]
+    D --> E[claim 确定性的 implementation ID]
     E --> F[一次创建或 reconcile-only]
     F --> G[核对 threadId 分支 HEAD 和状态]
+    B -->|是| R[核对 active implementation ownership 与原生任务身份]
+    R --> Q{是否走已批准隔离验收路径}
+    Q -->|否| U[复用实现 lane]
+    Q -->|是| AC[解析确定性的 key-acceptance]
+    AC --> AR{ownership 结果}
+    AR -->|create_once| AT[只创建一次验收任务]
+    AR -->|reconcile_only| AQ[reconcile 已有验收 claim]
+    AR -->|active| AU[复用已有验收 lane]
+    AT --> G
+    AQ --> G
+    AU --> G
+    U --> G
     G --> X[私有保存合同并发送短引用]
     X --> H[执行会话登记完整 update_plan]
     H --> I[按计划开发与最小验证]
@@ -97,7 +115,7 @@ flowchart TD
 
 | 层级 | 负责什么 |
 | --- | --- |
-| `AGENTS.md` 触发层 | 规定什么时候必须调用插件，不在全局提示词里堆叠完整编排流程。 |
+| `AGENTS.md` 触发层 | 没有匹配的 active 功能链时，以双钥匙约束功能链建立；精确匹配的 active implementation chain 无需再次点名 Guard，可复用现有 lane 或 claim 唯一的确定性验收 lane。 |
 | Control Skill | 判断新建或复用、创建前 claim、一次原生创建或 reconcile、模型选择、Git 基线与私有合同交接。 |
 | Execution Skill | 编译并执行版本化合同，登记稳定的 `update_plan`，完成本地实现、验证和结果交接。 |
 | Hooks | 在标记过的执行会话中检查写入前置条件、保存压缩检查点、恢复状态并阻止无证据的提前结束。 |
@@ -108,7 +126,8 @@ flowchart TD
 ## 主要能力
 
 - 按用户目标、范围和真实独立价值决定继续原任务还是创建新任务；新增验收细节本身不再触发新建。
-- 同一功能的实现、优化、验收失败修复和复验固定复用一个实现现场；确需隔离时最多增加一个验收现场，并持续复用。
+- 已批准且精确匹配 active chain 的继续实施、优化、验收失败修复、测试、文档更新和复验无需再次点名 Guard，固定复用原实现现场或已有验收现场。
+- active implementation chain 出现已批准的具体隔离需求时，无需再次调用即可 claim 唯一的确定性验收 lane；只有第一次 claim 可以创建一次，后续全部 reconcile 或复用。
 - 在调用 `create_thread` 前持锁写入一次性 claim；报错、超时、崩溃、重载或只返回 `clientThreadId` 都不会重新授权创建。
 - 对已 claim 的迭代只做 reconcile；只有恰好一个真实任务和完整 Git 现场才能原子变为 active，零个或多个候选都会停止。
 - 等待真实 `threadId`，不把排队中的 `clientThreadId` 当成可执行任务。

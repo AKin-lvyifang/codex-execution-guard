@@ -9,7 +9,7 @@ Execution Guard addresses one question: how does an approved implementation plan
 Reliable execution needs four durable elements:
 
 1. Approved intent: goal, scope, decisions, non-goals, authorization, and acceptance.
-2. Isolated state: one execution task, one worktree, and one feature branch.
+2. Isolated state: one implementation task, worktree, and branch per feature chain, plus at most one deterministic acceptance lane for an approved isolation need.
 3. Recoverable progress: stable plan IDs, current status, deviations, and validation evidence.
 4. A bounded exit: completion is evaluated against the approved contract, not newly invented gates.
 
@@ -23,7 +23,7 @@ flowchart LR
     C --> S[execution-guard Skill]
     S --> N[Native Codex project and task tools]
     S --> R[(V2 claims and task ownership)]
-    N --> T[Isolated worktree execution task]
+    N --> T[Implementation and optional sole acceptance worktree tasks]
     S --> X[(Private canonical contract artifact)]
     X -.short SHA-256 reference.-> T
     H[Lifecycle Hooks] -.guard and recover.-> T
@@ -34,7 +34,7 @@ flowchart LR
 
 ### Trigger layer
 
-`AGENTS.md` defines when `$execution-guard` is mandatory. It does not embed tool order, model policy, contract fields, or the Hook state machine, keeping the global prompt small.
+`AGENTS.md` keeps feature-chain establishment separate from lane routing. Without matching active feature-chain ownership and control identity, explicit control intent and an approved, sufficiently frozen real-repository implementation are both required to establish the chain. A prior explicit invocation remains evidence through clarification, then transfers routing identity to the exact active ownership and control chain when implementation starts; cancellation or an independent replacement ends it without handoff. An approved exact active-chain follow-up reuses the implementation lane or an existing acceptance lane without another Guard invocation only after the selected lane's active ownership and native task identity match. If that active implementation chain later has a concrete approved isolation need, the inherited identity may claim its sole deterministic acceptance lane: the first claim may create once, and later claims reconcile or reuse without retry-suffixed IDs. The chain identity ends when explicitly merged or cancelled. Skill-only invocation, research or review, and one-off Paper, Figma, or HTML exploration stay in the current task even when they generate code or use `$frontend-design`. The trigger does not embed tool order, model policy, contract fields, or the Hook state machine.
 
 ### Control Skill
 

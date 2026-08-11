@@ -1,11 +1,30 @@
 ---
 name: execution-guard
-description: Control and execute one bounded Codex implementation iteration using native project and task tools, model routing, a persistent local ownership record, a real Git baseline, stable update_plan steps, opt-in lifecycle recovery, validation budgets, and a final receipt. Use when deciding whether approved work should create or reuse a Codex task, compiling or sending an execution contract, starting guarded implementation, or resuming it after compaction.
+description: Control and execute one bounded Codex implementation iteration using native project and task tools, model routing, a persistent local ownership record, a real Git baseline, stable update_plan steps, opt-in lifecycle recovery, validation budgets, and a final receipt. Use whenever the user explicitly invokes $execution-guard, when deciding whether approved real-repository work qualifies for guarded feature-chain establishment or exact active-chain lane routing, when compiling or sending an execution contract, when starting guarded implementation, or when resuming it after compaction.
 ---
 
 # Codex Execution Guard
 
 Keep planning control and guarded execution distinct. This Skill and its Hooks are guardrails, not a security boundary.
+
+## Qualify control entry
+
+Always load and respond to this Skill when the user explicitly invokes `$execution-guard`. Invocation alone does not authorize task ownership or environment changes.
+
+When no matching active feature-chain ownership and control identity exists, require both keys before establishing that feature chain:
+
+1. **Explicit control intent:** the current task is explicitly designated as control for the same still-pending implementation, including by a prior explicit `$execution-guard` invocation in its unresolved clarification chain, or the current prompt explicitly invokes `$execution-guard`.
+2. **Approved repository implementation:** the user has approved starting or continuing a sufficiently frozen implementation in a real Git repository.
+
+For that new-chain candidate, if either key is missing, stay in the current task. Do not claim, create, or reuse an execution task, and do not create a branch or worktree. Research, analysis, review, and one-off Paper, Figma, or HTML exploration remain in the current task even when they generate code or use frontend-design. An approved production page may establish a feature chain when it is a real repository implementation and both keys are present.
+
+When an explicit invocation opens clarification for a still-pending implementation, retain it as explicit-control evidence across later clarification turns in that same chain. Once ownership is finalized as active and implementation starts, end the pending designation by transferring its routing identity to that exact active ownership and control chain. Cancellation or replacement by an independent goal ends it without handoff.
+
+A user-approved continuation, optimization, failed-acceptance repair, test, or documentation update whose active implementation ownership and native task identity match exactly reuses the original implementation lane. An isolated recheck whose existing sole approved acceptance ownership and native task identity match exactly reuses that acceptance lane. Neither requires another Guard invocation or control designation, creates a second implementation lane, or absorbs an independent goal.
+
+When that exact active implementation chain has a concrete approved isolation need and no acceptance lane yet exists, its inherited routing identity may deterministically claim the sole `<feature-chain-key>-acceptance` lane without another Guard invocation or control designation. The first claim authorizes at most one create; every later claim reconciles or reuses existing ownership. Never create `acceptance-v2`, `acceptance-v3`, or a timestamped retry lane.
+
+This active feature-chain identity lasts until the chain is explicitly merged or cancelled. The two-key gate applies only to first feature-chain establishment without matching active ownership and control identity. A valid marked execution contract or persisted execution resume follows the existing execution path without restating the two keys.
 
 ## Route the workflow
 

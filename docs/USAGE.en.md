@@ -38,16 +38,24 @@ Open `/hooks`, inspect the command Hooks, and trust the current version. Executi
 Add this rule to global or project `AGENTS.md`:
 
 ```text
-When the user explicitly authorizes implementation of a new feature, an independent code task, or continuation of an existing feature, the project control task must invoke $execution-guard. Task creation or reuse, model and reasoning selection, worktree and branch management, plan persistence, execution recovery, and final handoff follow that Skill. Never push, open a pull request, run remote CI, tag, release, or deploy without explicit user authorization.
+- When no matching active feature-chain ownership and control identity exists, establish that feature chain only when both are true: the current task is explicitly designated as control for the same still-pending implementation, including by a prior explicit $execution-guard invocation in its unresolved clarification chain, or the current prompt explicitly names $execution-guard; and the user approved starting or continuing a sufficiently frozen implementation in a real Git repository.
+- Explicitly naming $execution-guard still requires loading the Skill and responding in the current task. Without implementation approval or frozen boundaries, stay there without a claim, execution task, branch, or worktree. The invocation remains control-intent evidence across later clarification turns for that same still-pending implementation. Once ownership is finalized as active and implementation starts, the pending designation ends by transferring its routing identity to that exact active ownership and control chain; cancellation or replacement by an independent goal ends it without handoff.
+- A user-approved continuation, optimization, failed-acceptance repair, test, or documentation update whose active implementation ownership and native task identity match exactly reuses the original implementation lane. An isolated recheck whose existing sole approved acceptance ownership and native task identity match exactly reuses that acceptance lane. Neither requires another Guard invocation or control designation, creates a second implementation lane, or absorbs an independent goal.
+- When that exact active implementation chain has a concrete approved isolation need and no acceptance lane exists, its inherited routing identity may deterministically claim the sole <feature-chain-key>-acceptance lane without another Guard invocation or control designation. The first claim permits at most one create; later claims reconcile or reuse, and acceptance-v2, acceptance-v3, or timestamped retry lanes are forbidden.
+- Research, analysis, review, and one-off Paper, Figma, or HTML exploration stay in the current task even when they generate code or use $frontend-design; an approved production page in a real Git repository may establish a feature chain when both keys are present.
+- After new-chain qualification or an exact active-chain match, task creation or reuse, model and reasoning selection, worktree and branch management, plan persistence, execution recovery, and final handoff follow that Skill. Active chain identity ends only when the feature chain is explicitly merged or cancelled. A valid marked execution contract or persisted execution resume follows the existing execution path without restating the entry gate.
+- Never push, open a pull request, run remote CI, tag, release, or deploy without explicit user authorization.
 ```
 
 The trigger handles routing only. Ownership, model policy, contract format, recovery, and completion stay inside the plugin instead of expanding the global prompt.
 
-Without an `AGENTS.md` trigger, explicitly send:
+Without an `AGENTS.md` trigger, use this explicit prompt only to establish a feature chain when no matching active ownership and control identity exists:
 
 ```text
 The plan is approved. Start implementation with $execution-guard.
 ```
+
+An approved exact active-chain follow-up does not repeat the prompt. Implementation work matches implementation ownership; an isolated recheck matches existing acceptance ownership; both also match native task identity before reuse. A concrete approved isolation need may instead claim the chain's sole deterministic acceptance lane through inherited routing identity.
 
 ## 4. Plan in the control task
 
@@ -61,12 +69,14 @@ Material product ambiguity remains in control. The executor is not asked to inve
 | --- | --- |
 | The same feature keeps its goal, scope, and implementation responsibility | Reuse the implementation task |
 | Acceptance detail, recheck, optimization, failed-acceptance fix, test, or docs for the same feature | Reuse the existing task |
-| Acceptance truly needs an independent environment or responsibility | Establish at most one acceptance task, then reuse it |
+| An exact active implementation chain has an approved independent acceptance environment or responsibility need | Deterministically claim its sole acceptance task, then reuse it |
 | A known feature chain was explicitly merged or cancelled and later restarts | Create a new task |
 | The work adds independent user value | Create a new task |
 | Evidence is missing or contradictory | Stop in control |
 
-Before the first claim, control freezes one feature-chain key and deterministically derives `<key>-implementation`. It adds the sole `<key>-acceptance` only when acceptance must be isolated. Every later optimization, failure fix, and recheck claims the same ID; never mint `acceptance-v2`, `acceptance-v3`, or a timestamped retry. This cap is an orchestration rule, not a hard registry-schema limit.
+Before the first claim, control freezes one feature-chain key and deterministically derives `<key>-implementation`. It derives the sole `<key>-acceptance` only when the exact active implementation chain later has a concrete approved isolation need. The inherited active-chain identity may make that first acceptance claim without another Guard invocation: `create_once` authorizes at most one create, while every existing claim reconciles and every active record is reused. Every later optimization, failure fix, and recheck resolves the same IDs; never mint `acceptance-v2`, `acceptance-v3`, or a timestamped retry. This cap is an orchestration rule, not a hard registry-schema limit.
+
+For an approved implementation follow-up, active implementation ownership and native task identity must match exactly. An isolated recheck instead matches the existing sole acceptance ownership and native task identity. Either match reuses that lane without another Guard invocation or control designation. If the acceptance lane does not exist, only the concrete approved isolation path above may establish it. A merged or cancelled chain is closed, and an independent goal must qualify as a new feature chain instead of inheriting the old identity.
 
 The V2 ownership registry remains at the established private target-host path `PLUGIN_DATA/control/iterations.json` and is never committed. A new lane starts as `claimed` without task or Git identity and becomes `active` only after verification. A receipt, acceptance failure, escalation, or phase closeout does not close it; only an explicit `merged` or `cancelled` outcome for the feature chain makes it `closed`. A V1 file at that same path migrates in place on the next locked write.
 
