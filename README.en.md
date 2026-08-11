@@ -4,7 +4,7 @@
 
 A local-first Codex plugin that keeps planning in a control task, sends implementation to one isolated execution task, and uses Hooks to guard plan registration, writes, context compaction, recovery, and completion.
 
-Current version: `0.3.0+codex.20260811094944` · License: [MIT](LICENSE)
+Current version: `0.3.1+codex.20260812000651` · License: [MIT](LICENSE)
 
 This is a community-maintained open-source project, not an official OpenAI product.
 

@@ -295,7 +295,7 @@ Resolution: one focused control helper, one small shared contract protocol, and 
 
 ## 10. Implemented release scope
 
-The 0.3.0 release implements the following scope:
+The 0.3.x release line implements the following scope:
 
 1. Preserve the public `$execution-guard` entry and keep product decisions in control while execution follows one bounded contract at a time.
 2. Use a V2 `claimed → active → closed` registry with one-shot creation authorization, reconcile-only recovery, atomic finalize, locked V1 migration, and explicit merged/cancelled closure.
@@ -305,3 +305,4 @@ The 0.3.0 release implements the following scope:
 6. Keep completed and escalated contracts write-locked, support verified same-contract private-reference continuation, and preserve one idempotent terminal archive across recovery events.
 7. Restore the complete contract, plan, acceptance, deviations, escalation, and evidence after compaction without plugin-side character truncation.
 8. Validate control, lifecycle, Skill, and plugin contracts while keeping marketplace reload, Hook trust, host delivery, and actual runtime-model identity as explicit host checks.
+9. Require explicit control intent plus an approved real-repository implementation to establish a new feature chain; reuse exact active implementation ownership for same-chain follow-ups and permit only one deterministic acceptance lane when isolation is approved.

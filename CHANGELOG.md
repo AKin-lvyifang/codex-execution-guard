@@ -4,6 +4,11 @@ All notable changes to this project are documented here. 本文件记录项目�
 
 ## Unreleased / 未发布
 
+## 0.3.1 - 2026-08-12
+
+- Required explicit control intent plus an approved, sufficiently frozen real-repository implementation before establishing a new feature chain; research, review, and one-off prototypes no longer qualify by resemblance alone. / 建立新功能链前必须同时具备明确中控意图，以及已批准且边界充分冻结的真实仓库实施；研究、评审和一次性原型不再仅因内容相似而触发路由。
+- Reused the exact active implementation lane for approved same-chain follow-ups without another Guard invocation, and allowed at most one deterministic acceptance lane when isolation is genuinely required. / 同一 active 功能链已批准的后续工作无需再次点名 Guard，直接复用精确匹配的实现现场；确需隔离时最多建立一个确定性验收现场并持续复用。
+
 ## 0.3.0 - 2026-08-11
 
 - Added locked V2 creation claims, reconcile-only recovery, atomic finalization, and migration of V1 ownership records on the next locked write. / 增加持锁的 V2 创建 claim、仅 reconcile 恢复、原子 finalize，以及下一次持锁写入时的 V1 所有权记录迁移。
