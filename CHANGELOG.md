@@ -4,6 +4,8 @@ All notable changes to this project are documented here. 本文件记录项目�
 
 ## Unreleased / 未发布
 
+## 0.3.2 - 2026-08-12
+
 - Added a dedicated Guard bootstrap marker and `PreToolUse` preflight for canonical `create_thread` project/worktree payloads, with precise correction guidance before host dispatch and unchanged no-retry semantics afterward; ordinary unmarked creation remains unaffected. / 新增 Guard bootstrap 独立标记与 `PreToolUse` 参数预检，在宿主调用前校验 canonical `create_thread` project/worktree 结构并给出精确修正提示，调用后的禁止重试语义保持不变；普通未标记创建不受影响。
 
 ## 0.3.1 - 2026-08-12

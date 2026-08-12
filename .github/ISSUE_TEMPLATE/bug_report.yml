@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: Plugin version / 插件版本
-      placeholder: 0.3.1+codex.20260812000651
+      placeholder: 0.3.2+codex.20260812154508
     validations:
       required: true
   - type: input
