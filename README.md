@@ -118,7 +118,7 @@ flowchart TD
 | `AGENTS.md` 触发层 | 没有匹配的 active 功能链时，以双钥匙约束功能链建立；精确匹配的 active implementation chain 无需再次点名 Guard，可复用现有 lane 或 claim 唯一的确定性验收 lane。 |
 | Control Skill | 判断新建或复用、创建前 claim、一次原生创建或 reconcile、模型选择、Git 基线与私有合同交接。 |
 | Execution Skill | 编译并执行版本化合同，登记稳定的 `update_plan`，完成本地实现、验证和结果交接。 |
-| Hooks | 在标记过的执行会话中检查写入前置条件、保存压缩检查点、恢复状态并阻止无证据的提前结束。 |
+| Hooks | 在 Guard bootstrap 创建前预检原生参数；在标记过的执行会话中检查写入前置条件、保存压缩检查点、恢复状态并阻止无证据的提前结束。 |
 | 本地状态脚本 | 用一次性创建 claim、原子任务归属和私有合同 artifact 保存控制状态；不需要 MCP、服务器、数据库或账号系统。 |
 
 详细设计见 [架构与原理](docs/ARCHITECTURE.zh-CN.md)。
@@ -129,6 +129,7 @@ flowchart TD
 - 已批准且精确匹配 active chain 的继续实施、优化、验收失败修复、测试、文档更新和复验无需再次点名 Guard，固定复用原实现现场或已有验收现场。
 - active implementation chain 出现已批准的具体隔离需求时，无需再次调用即可 claim 唯一的确定性验收 lane；只有第一次 claim 可以创建一次，后续全部 reconcile 或复用。
 - 在调用 `create_thread` 前持锁写入一次性 claim；报错、超时、崩溃、重载或只返回 `clientThreadId` 都不会重新授权创建。
+- Guard bootstrap 使用独立标记和固定的 project/worktree 结构；Hook 会在请求到达宿主前拦截顶层 `projectId`、错误环境或不完整的 branch `startingState`。只有明确写明 `before host dispatch` 的本地预检拒绝可以修正后重发，预检通过后仍遵守一次调用规则。
 - 对已 claim 的迭代只做 reconcile；只有恰好一个真实任务和完整 Git 现场才能原子变为 active，零个或多个候选都会停止。
 - 等待真实 `threadId`，不把排队中的 `clientThreadId` 当成可执行任务。
 - 同一宿主把完整合同保存在私有 `PLUGIN_DATA`，聊天只显示经过 UTF-8 字节上限处理的单行任务目标与短引用；Hook 在创建状态前核对大小、摘要、合同 ID、session、active ownership 和 Git 基线。
@@ -180,7 +181,7 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py \
   plugins/codex-execution-guard
 ```
 
-当前固定测试覆盖一次性创建 claim、并发与 reconcile-only、V1 registry 迁移、私有合同引用及错误绑定、功能链复用、终态写锁、安全续接、基线校验、完整恢复、验证去重和完成判断。真实宿主安装、Hook 信任和宿主内部单次调用副作用仍需在重启后的真实环境中确认。
+当前固定测试覆盖 Guard bootstrap 参数预检、普通 `create_thread` 不受影响、一次性创建 claim、并发与 reconcile-only、V1 registry 迁移、私有合同引用及错误绑定、功能链复用、终态写锁、安全续接、基线校验、完整恢复、验证去重和完成判断。真实宿主安装、Hook 信任和宿主内部单次调用副作用仍需在重启后的真实环境中确认。
 
 ## 许可证
 

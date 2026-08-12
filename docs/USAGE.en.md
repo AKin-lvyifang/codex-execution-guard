@@ -98,8 +98,8 @@ If live discovery is unavailable, a local-pool fallback is allowed only when the
 
 1. Resolve the real Git project with native Codex project tools.
 2. Use the feature chain's frozen implementation or acceptance iteration ID and persist its locked V2 claim. The first result is one `create_once`; every later result is permanently `reconcile_only`.
-3. Only for `create_once`, create one visible worktree task, with exactly one native create call.
-4. Do not retry after a task, `clientThreadId`, error, or timeout response. Reconcile through the host's status surface or bounded task lists; zero or multiple candidates stop without automatic archive.
+3. Only for `create_once`, create one visible worktree task. Put the standalone `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` marker on the bootstrap prompt's first line so the Hook can preflight the arguments before host dispatch.
+4. If the Hook explicitly reports `before host dispatch`, the host did not receive the request. Keep the same `create_once` authorization, correct the payload, and do not claim again. After preflight passes, a task, `clientThreadId`, error, or timeout means the host call occurred and creation must not be retried. Reconcile through the host's status surface or bounded task lists; zero or multiple candidates stop without automatic archive.
 5. Treat `clientThreadId` only as a queue token and wait for the one real `threadId`.
 6. Set a clear title and ask the task to report only `cwd`, linked-worktree identity, branch, full `HEAD`, and Git status.
 7. If detached, create and switch exactly one `codex/<iteration>` branch.
@@ -107,7 +107,36 @@ If live discovery is unavailable, a local-pool fallback is allowed only when the
 9. Finalize the claim to `active` only after exactly one candidate returns a complete verified report. Repeating the same finalize is idempotent; conflicting ownership stops.
 10. Compile and privately stage the contract against active ownership, then send its short reference.
 
-The first bootstrap prompt contains no activation marker and does not authorize project writes, plan changes, validation, commits, or additional tasks.
+Use the smallest payload by default, with `projectId` only inside `target`:
+
+```json
+{
+  "target": {
+    "type": "project",
+    "projectId": "<project ID returned by list_projects>",
+    "environment": {
+      "type": "worktree"
+    }
+  },
+  "prompt": "CODEX_EXECUTION_GUARD_BOOTSTRAP_V1\n<environment-only bootstrap instructions>"
+}
+```
+
+Only when the task must start from an existing named branch may `environment` include a complete branch `startingState`:
+
+```json
+{
+  "type": "worktree",
+  "startingState": {
+    "type": "branch",
+    "branchName": "main"
+  }
+}
+```
+
+Do not use `startingState` to name the new feature branch, and do not repeat `projectId` at the top level. Host fields such as title, model, and reasoning may sit beside this target.
+
+The first bootstrap prompt has the preflight marker but not the `CODEX_EXECUTION_GUARD_CONTRACT_V1` activation marker. It does not authorize project writes, plan changes, validation, commits, or additional tasks.
 
 ## 8. The execution contract
 
@@ -194,6 +223,10 @@ The task is still queued and the durable claim remains `reconcile_only`. Wait fo
 ### `create_thread` reports an error or timeout
 
 Do not retry. The host may already have produced a side effect. Reading the same iteration claim returns `reconcile_only`; inspect native tasks instead. Continue bootstrap only for exactly one candidate. Zero or multiple candidates return to human control.
+
+### Guard rejects the payload before host dispatch
+
+Only an error explicitly containing `before host dispatch` confirms that the request did not reach the host. Follow the message: remove a top-level `projectId`, provide `target.projectId`, or use a complete branch `startingState`, then submit the corrected payload under the existing `create_once` authorization without claiming again. Any error, timeout, or queue result without that confirmation follows the previous section and must not be retried.
 
 ### A contract reference does not activate
 

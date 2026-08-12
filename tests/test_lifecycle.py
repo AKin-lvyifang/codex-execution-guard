@@ -114,6 +114,33 @@ class LifecycleFixtureTests(unittest.TestCase):
         event.update(fields)
         return event
 
+    def guard_bootstrap_create_input(
+        self,
+        *,
+        starting_state: dict[str, Any] | None = None,
+        top_level_project_id: bool = False,
+    ) -> dict[str, Any]:
+        environment: dict[str, Any] = {"type": "worktree"}
+        if starting_state is not None:
+            environment["startingState"] = starting_state
+        tool_input: dict[str, Any] = {
+            "title": "Fixture implementation",
+            "model": "gpt-5.6-sol",
+            "thinking": "high",
+            "target": {
+                "type": "project",
+                "projectId": "project-fixture",
+                "environment": environment,
+            },
+            "prompt": (
+                f"{execution.BOOTSTRAP_MARKER}\n"
+                "Bootstrap only for iteration fixture-v1-implementation."
+            ),
+        }
+        if top_level_project_id:
+            tool_input["projectId"] = "project-fixture"
+        return tool_input
+
     def run_hook(
         self,
         event: dict[str, Any],
@@ -1274,6 +1301,201 @@ class LifecycleFixtureTests(unittest.TestCase):
                     denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
                     "deny",
                 )
+
+    def test_guard_bootstrap_create_rejects_top_level_project_id_before_dispatch(self) -> None:
+        denied = self.run_hook(
+            self.event(
+                "control",
+                "PreToolUse",
+                turn_id="turn-1",
+                tool_name="create_thread",
+                tool_use_id="create-invalid-project",
+                tool_input=self.guard_bootstrap_create_input(top_level_project_id=True),
+            )
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+            "deny",
+        )
+        reason = denied["hookSpecificOutput"]["permissionDecisionReason"]  # type: ignore[index]
+        self.assertIn("target.projectId", reason)
+        self.assertIn("before host dispatch", reason)
+
+    def test_guard_bootstrap_create_rejects_incomplete_branch_starting_state(self) -> None:
+        denied = self.run_hook(
+            self.event(
+                "control",
+                "PreToolUse",
+                turn_id="turn-1",
+                tool_name="create_thread",
+                tool_use_id="create-invalid-branch",
+                tool_input=self.guard_bootstrap_create_input(
+                    starting_state={"branchName": "main"}
+                ),
+            )
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+            "deny",
+        )
+        reason = denied["hookSpecificOutput"]["permissionDecisionReason"]  # type: ignore[index]
+        self.assertIn('"type":"branch"', reason)
+        self.assertIn("before host dispatch", reason)
+
+    def test_guard_bootstrap_create_rejects_noncanonical_project_worktree_targets(self) -> None:
+        cases = (
+            ("missing-target", lambda payload: payload.pop("target"), "target must be an object"),
+            (
+                "wrong-target-type",
+                lambda payload: payload["target"].__setitem__("type", "local"),
+                'target.type must be "project"',
+            ),
+            (
+                "missing-project-id",
+                lambda payload: payload["target"].pop("projectId"),
+                "target.projectId must be a non-empty string",
+            ),
+            (
+                "wrong-environment-type",
+                lambda payload: payload["target"]["environment"].__setitem__(
+                    "type", "local"
+                ),
+                'target.environment.type must be "worktree"',
+            ),
+        )
+        for name, mutate, expected in cases:
+            with self.subTest(name=name):
+                tool_input = self.guard_bootstrap_create_input()
+                mutate(tool_input)
+                denied = self.run_hook(
+                    self.event(
+                        "control",
+                        "PreToolUse",
+                        turn_id="turn-1",
+                        tool_name="create_thread",
+                        tool_use_id=f"create-{name}",
+                        tool_input=tool_input,
+                    )
+                )
+                self.assertEqual(
+                    denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+                    "deny",
+                )
+                reason = denied["hookSpecificOutput"]["permissionDecisionReason"]  # type: ignore[index]
+                self.assertIn(expected, reason)
+                self.assertIn("before host dispatch", reason)
+
+    def test_guard_bootstrap_create_accepts_minimal_and_complete_branch_payloads(self) -> None:
+        payloads = (
+            self.guard_bootstrap_create_input(),
+            self.guard_bootstrap_create_input(
+                starting_state={"type": "branch", "branchName": "main"}
+            ),
+        )
+        for index, tool_input in enumerate(payloads):
+            with self.subTest(index=index):
+                allowed = self.run_hook(
+                    self.event(
+                        "control",
+                        "PreToolUse",
+                        turn_id="turn-1",
+                        tool_name="create_thread",
+                        tool_use_id=f"create-valid-{index}",
+                        tool_input=tool_input,
+                    )
+                )
+                self.assertIsNone(allowed)
+
+    def test_non_guard_create_thread_payload_is_not_preflighted(self) -> None:
+        allowed = self.run_hook(
+            self.event(
+                "ordinary",
+                "PreToolUse",
+                turn_id="turn-1",
+                tool_name="create_thread",
+                tool_use_id="create-ordinary",
+                tool_input={
+                    "projectId": "legacy-top-level-shape",
+                    "target": {
+                        "type": "project",
+                        "environment": {
+                            "type": "worktree",
+                            "startingState": {"branchName": "main"},
+                        },
+                    },
+                    "prompt": "Create an ordinary task without the Guard bootstrap marker.",
+                },
+            )
+        )
+        self.assertIsNone(allowed)
+
+    def test_guard_bootstrap_marker_must_be_the_first_prompt_line(self) -> None:
+        tool_input = self.guard_bootstrap_create_input(top_level_project_id=True)
+        tool_input["prompt"] = (
+            "Ordinary task instructions.\n"
+            f"{execution.BOOTSTRAP_MARKER}\n"
+            "Mentioning the marker later must not opt this call into preflight."
+        )
+        allowed = self.run_hook(
+            self.event(
+                "ordinary-marker-mention",
+                "PreToolUse",
+                turn_id="turn-1",
+                tool_name="create_thread",
+                tool_use_id="create-marker-later",
+                tool_input=tool_input,
+            )
+        )
+        self.assertIsNone(allowed)
+
+    def test_guard_preflight_denial_allows_payload_correction_without_host_retry(self) -> None:
+        denied = self.run_hook(
+            self.event(
+                "control",
+                "PreToolUse",
+                turn_id="turn-1",
+                tool_name="create_thread",
+                tool_use_id="create-correctable-invalid",
+                tool_input=self.guard_bootstrap_create_input(
+                    starting_state={"branchName": "main"}
+                ),
+            )
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+            "deny",
+        )
+        corrected = self.run_hook(
+            self.event(
+                "control",
+                "PreToolUse",
+                turn_id="turn-1",
+                tool_name="create_thread",
+                tool_use_id="create-corrected",
+                tool_input=self.guard_bootstrap_create_input(),
+            )
+        )
+        self.assertIsNone(corrected)
+
+    def test_active_execution_create_uses_unique_task_denial_before_payload_preflight(self) -> None:
+        self.activate()
+        denied = self.run_hook(
+            self.event(
+                "guarded",
+                "PreToolUse",
+                turn_id="turn-2",
+                tool_name="create_thread",
+                tool_use_id="create-active-invalid",
+                tool_input=self.guard_bootstrap_create_input(top_level_project_id=True),
+            )
+        )
+        self.assertEqual(
+            denied["hookSpecificOutput"]["permissionDecision"],  # type: ignore[index]
+            "deny",
+        )
+        reason = denied["hookSpecificOutput"]["permissionDecisionReason"]  # type: ignore[index]
+        self.assertIn("unique execution task", reason)
+        self.assertNotIn("target.projectId", reason)
 
     def test_guarded_write_waits_for_environment_and_exact_plan(self) -> None:
         self.activate()

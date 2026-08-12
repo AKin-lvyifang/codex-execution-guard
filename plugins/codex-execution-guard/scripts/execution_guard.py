@@ -23,6 +23,10 @@ from contract_protocol import (
 )
 
 MARKER_PATTERN = re.compile(rf"(?m)^{re.escape(MARKER)}\r?$")
+BOOTSTRAP_MARKER = "CODEX_EXECUTION_GUARD_BOOTSTRAP_V1"
+BOOTSTRAP_MARKER_PATTERN = re.compile(
+    rf"\A{re.escape(BOOTSTRAP_MARKER)}(?:\r?\n|$)"
+)
 DELEGATION_OPEN = "<codex_delegation>"
 DELEGATION_CLOSE = "</codex_delegation>"
 INPUT_OPEN = "<input>"
@@ -78,6 +82,56 @@ def block_pre_tool(reason: str) -> None:
             }
         }
     )
+
+
+def guard_bootstrap_create_input(event: dict[str, Any]) -> dict[str, Any] | None:
+    if event.get("tool_name") != "create_thread":
+        return None
+    tool_input = event.get("tool_input")
+    if not isinstance(tool_input, dict):
+        return None
+    prompt = tool_input.get("prompt")
+    if not isinstance(prompt, str) or not BOOTSTRAP_MARKER_PATTERN.search(prompt):
+        return None
+    return tool_input
+
+
+def validate_guard_bootstrap_create(tool_input: dict[str, Any]) -> None:
+    error_prefix = "Guard bootstrap preflight blocked create_thread before host dispatch: "
+    retry_boundary = (
+        " This denial did not dispatch a host call. If this was the original create_once "
+        "attempt, correct the payload and submit it again without claiming again; after "
+        "preflight passes, the existing one-shot no-retry rule applies."
+    )
+
+    def reject(reason: str) -> None:
+        raise GuardError(f"{error_prefix}{reason}{retry_boundary}")
+
+    if "projectId" in tool_input:
+        reject("remove top-level projectId and keep it only at target.projectId.")
+    target = tool_input.get("target")
+    if not isinstance(target, dict):
+        reject("target must be an object.")
+    if target.get("type") != "project":
+        reject('target.type must be "project".')
+    project_id = target.get("projectId")
+    if not isinstance(project_id, str) or not project_id.strip():
+        reject("target.projectId must be a non-empty string discovered from list_projects.")
+    environment = target.get("environment")
+    if not isinstance(environment, dict):
+        reject("target.environment must be an object.")
+    if environment.get("type") != "worktree":
+        reject('target.environment.type must be "worktree".')
+    if "startingState" not in environment:
+        return
+    starting_state = environment["startingState"]
+    if not isinstance(starting_state, dict):
+        reject("target.environment.startingState must be an object when present.")
+    if starting_state.get("type") != "branch":
+        reject('target.environment.startingState must include "type":"branch".')
+    branch_name = starting_state.get("branchName")
+    if not isinstance(branch_name, str) or not branch_name.strip():
+        reject("target.environment.startingState.branchName must be a non-empty string.")
 
 
 def context(event: str, message: str) -> None:
@@ -891,6 +945,10 @@ def main() -> int:
         event_name = event.get("hook_event_name")
         path = state_path(event)
         if path is None:
+            if event_name == "PreToolUse":
+                bootstrap_create = guard_bootstrap_create_input(event)
+                if bootstrap_create is not None:
+                    validate_guard_bootstrap_create(bootstrap_create)
             prompt = event.get("prompt")
             if (
                 event_name == "UserPromptSubmit"
@@ -926,6 +984,10 @@ def main() -> int:
             on_user_prompt(event, path, state)
             return 0
         if state is None or not state.get("active"):
+            if event_name == "PreToolUse":
+                bootstrap_create = guard_bootstrap_create_input(event)
+                if bootstrap_create is not None:
+                    validate_guard_bootstrap_create(bootstrap_create)
             return 0
         if event_name == "PreToolUse":
             on_pre_tool(event, state)

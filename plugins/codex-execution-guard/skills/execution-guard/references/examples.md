@@ -68,13 +68,28 @@ The first locked claim is the only create permission:
 Claim: create_once. Call native create_thread once.
 ```
 
+The default marked payload keeps `projectId` only inside `target` and omits `startingState`:
+
+```json
+{
+  "target": {
+    "type": "project",
+    "projectId": "project-id",
+    "environment": {"type": "worktree"}
+  },
+  "prompt": "CODEX_EXECUTION_GUARD_BOOTSTRAP_V1\nBootstrap only for iteration feature-v1."
+}
+```
+
+If Guard denies this payload in `PreToolUse` and says it was blocked before host dispatch, correct it under the same claim. After preflight passes, do not call `create_thread` again for any task, queue, error, or timeout result.
+
 Every later claim reconciles, even if the first call reported an error or returned only queue state:
 
 ```text
 Claim: reconcile_only. Do not call create_thread again; inspect native tasks. Zero or multiple candidates stop without retry or archive.
 ```
 
-## Marker-free bootstrap result
+## Contract-marker-free bootstrap result
 
 Do not activate from queued setup:
 

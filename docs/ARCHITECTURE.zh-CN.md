@@ -53,19 +53,19 @@ Execution 路径只接受合法的版本化合同或已经保存的恢复状态�
 | 事件 | 作用 |
 | --- | --- |
 | `UserPromptSubmit` | 解析 inline V1 或私有引用，在创建状态前校验 artifact 与绑定。 |
-| `PreToolUse` | 在环境和计划未就绪时拦截受覆盖的写操作。 |
+| `PreToolUse` | 在控制阶段预检带 bootstrap 标记的 `create_thread` 参数；在执行阶段于环境和计划未就绪时拦截受覆盖的写操作。 |
 | `PostToolUse` | 记录计划变化和有意义的验证证据。 |
 | `PreCompact` | 保存已经结构化的检查点。 |
 | `SessionStart` | 在 resume 或 compact 后恢复全部合同边界及完整计划、验收状态。 |
 | `Stop` | 未完成时要求继续，完成或合法升级时允许交付。 |
 
-没有标记的普通会话保持 fail-open：不创建 guard 状态，也不阻止工具。
+没有 bootstrap 或执行合同标记的普通会话保持 fail-open：不创建 guard 状态，也不阻止工具。bootstrap 标记只启用一次 `create_thread` 参数预检，不创建执行状态。
 
 ## 两阶段交接
 
 主控创建新 worktree 任务时还不知道真实路径、分支和 `HEAD`，因此不能直接编造合同基线。
 
-第一阶段先在 V2 registry 中原子 claim，再调用一次原生创建工具并发送不带标记的 bootstrap。`clientThreadId`、错误和超时都不会重新授权创建；之后只能 reconcile。零个或多个候选停止，恰好一个真实 `threadId` 才能继续验证环境报告。
+第一阶段先在 V2 registry 中原子 claim，再提交一次带 `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` 预检标记、但不带执行合同标记的原生创建请求。Hook 在宿主调用前核对 canonical project/worktree target；只有明确发生在 host dispatch 前的本地拒绝可以修正后重发。预检通过后，`clientThreadId`、错误和超时都不会重新授权创建；之后只能 reconcile。零个或多个候选停止，恰好一个真实 `threadId` 才能继续验证环境报告。
 
 第二阶段把验证过的单一候选原子 finalize 为 active，把 canonical 合同写进目标宿主私有 `PLUGIN_DATA`，再向执行任务发送标记和 SHA-256 短引用。执行会话在状态创建前校验 artifact、ownership 和实时基线，然后登记计划。这个顺序既避免合同指向不存在的现场，也避免超长 JSON 占据聊天正文。
 
@@ -116,6 +116,7 @@ Inline V1 继续兼容。只有控制端与执行端跨宿主、无法写入目�
 - 普通未激活会话出现本地状态问题时保持无影响。
 - 已激活执行会话遇到基线漂移时停止受覆盖的写操作，并返回具体恢复信息。
 - 所有权记录与原生任务状态不一致时停在主控协调。
+- 带 bootstrap 标记的创建参数若缺少 canonical project/worktree 结构，会在宿主调用前拒绝；普通未标记 `create_thread` 不受该预检影响。
 - 已 claim 的创建调用无论返回错误、超时还是排队状态都不得自动重试；reconcile 为零个或多个候选时停止。
 - 私有合同缺失、超限、篡改或绑定不一致时不创建部分 session state，也不自动改用 inline 绕过。
 - 缺少产品决定、需要新计划 ID 或改变验收时停在主控。

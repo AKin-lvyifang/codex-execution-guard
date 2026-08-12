@@ -53,19 +53,19 @@ The execution task cannot create, fork, delegate, or hand off another task.
 | Event | Responsibility |
 | --- | --- |
 | `UserPromptSubmit` | Resolve inline V1 or a private reference and validate its artifact before state creation. |
-| `PreToolUse` | Deny covered writes until environment and plan registration are ready. |
+| `PreToolUse` | Preflight marked Guard bootstrap `create_thread` arguments in control, then deny covered execution writes until environment and plan registration are ready. |
 | `PostToolUse` | Record plan transitions and meaningful validation evidence. |
 | `PreCompact` | Persist the already-structured checkpoint. |
 | `SessionStart` | Restore every contract boundary and exact plan and acceptance state after resume or compaction. |
 | `Stop` | Continue incomplete work and allow completion or a valid escalation. |
 
-An ordinary session without the marker remains fail-open: no guard state is created and tools are not blocked.
+An ordinary session without either marker remains fail-open: no guard state is created and tools are not blocked. The bootstrap marker enables only one `create_thread` payload preflight and does not create execution state.
 
 ## Two-stage handoff
 
 When control creates a new worktree task, it does not yet know the real path, branch, or `HEAD`. A contract cannot safely guess them.
 
-Stage one atomically claims the iteration in the V2 registry, then makes one native create call with a marker-free bootstrap. A `clientThreadId`, error, or timeout never renews creation permission; every later entry reconciles. Zero or multiple candidates stop. Exactly one real `threadId` may continue to environment verification.
+Stage one atomically claims the iteration in the V2 registry, then submits one native create request with the `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` preflight marker but no execution-contract marker. Before host dispatch, the Hook validates the canonical project/worktree target. Only an explicit local denial before dispatch permits a corrected submission. After preflight passes, a `clientThreadId`, error, or timeout never renews creation permission; every later entry reconciles. Zero or multiple candidates stop. Exactly one real `threadId` may continue to environment verification.
 
 Stage two atomically finalizes the verified candidate to active ownership, stores the canonical contract in target-host private `PLUGIN_DATA`, and sends only the marker plus a short SHA-256 reference. The Hook validates the artifact, ownership, and live baseline before state creation, then the executor registers the plan. This prevents both a guessed environment and oversized JSON in visible chat.
 
@@ -116,6 +116,7 @@ Selection must be inside the intersection of the first two. Acceptance at task c
 - Local state errors do not affect an ordinary unmarked session.
 - A baseline mismatch in an active contract stops covered writes and returns a concrete recovery message.
 - Registry and native-task disagreement returns to control.
+- A marked Guard bootstrap with a non-canonical project/worktree target is denied before host dispatch; ordinary unmarked `create_thread` calls are not preflighted.
 - A claimed create never retries after error, timeout, or queue state; reconciliation with zero or multiple candidates stops.
 - A missing, oversized, tampered, or wrongly bound private contract creates no partial session state and never silently falls back inline.
 - Missing product decisions, new plan IDs, or changed acceptance return to control.

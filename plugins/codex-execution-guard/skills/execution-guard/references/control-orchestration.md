@@ -54,7 +54,7 @@ The exact active implementation chain supplies the routing identity for its firs
 
 Use `scripts/control_plane.py` with the V2 registry at the established target-host private path `PLUGIN_DATA/control/iterations.json`. Never commit the registry or its `contracts/` artifacts. The registry has three durable states: `claimed`, `active`, and `closed`. Every mutation acquires the stable sidecar process lock before reloading and validating state, holds it through mutation and atomic replacement, then releases it. A V1 registry at the same path remains readable and migrates in place as one unit on the next locked write.
 
-Call `claim` before the native create tool. The first claim returns `create_once`; that is the only authorization for one `create_thread` call. A later claim for the same iteration returns `reconcile_only` forever. An error, timeout, crash, reload, or queued `clientThreadId` never clears, expires, or renews the claim.
+Call `claim` before the native create tool. The first claim returns `create_once`; that is the only authorization for one host-dispatched `create_thread` call. A later claim for the same iteration returns `reconcile_only` forever. An error, timeout, crash, reload, or queued `clientThreadId` never clears, expires, or renews the claim. A Guard `PreToolUse` denial explicitly stating that it occurred before host dispatch does not consume that authorization; correct the payload and submit it again without claiming again. No other error permits another create attempt.
 
 Finalize a claim to `active` only after native reconciliation returns exactly one real task and its bootstrap proves the worktree, branch, full `HEAD`, and status. Zero or multiple candidates stop. Do not retry creation, pick a candidate by guesswork, or archive candidates automatically. Read or reuse an active record before follow-up work. Keep ownership active through completion receipts, acceptance failures, escalations, and phase closeout; close it only after the whole feature chain is explicitly merged or cancelled.
 
@@ -77,7 +77,7 @@ Follow this order exactly. Stop before implementation if any step fails.
 2. Apply the create-or-reuse table. For reuse, resolve the active registry record against `list_threads`; send follow-up work only to that real `threadId` and skip creation.
 3. Inspect the current native `create_thread` or equivalent tool schema for host-advertised model and reasoning combinations. Intersect that evidence with the user's authorized pool and apply [routing-policy.md](routing-policy.md).
 4. Atomically `claim` the iteration. If the result is `reconcile_only`, do not call `create_thread`; reconcile native task state instead. Continue only when exactly one candidate can be verified.
-5. Only for `create_once`, call native `create_thread` once with `target.type="project"`, the discovered `projectId`, and `target.environment.type="worktree"`. Send a marker-free bootstrap that authorizes only environment setup and reporting. Do not fork or use a local environment as a substitute.
+5. Only for `create_once`, call native `create_thread` with the canonical payload below. Start its prompt with the standalone bootstrap marker, but keep the execution-contract marker out. The Guard `PreToolUse` preflight must pass before host dispatch. Do not fork or use a local environment as a substitute.
 6. Whether the create call returns a task, a queue token, an error, or times out, never call it again for this claim. Use the host's supported readiness surface or bounded `list_threads` snapshots. Zero or multiple candidates stop without retry or archive.
 7. Treat `clientThreadId` only as queued setup. Never pass it to tools requiring `threadId`, persist it as ownership, or activate a contract from it.
 8. Set a clear title on the one real task with native `set_thread_title`.
@@ -88,16 +88,47 @@ Follow this order exactly. Stop before implementation if any step fails.
 
 Do not guess a project, task identifier, path, branch, commit, cleanliness, or runtime model. If the host exposes no way to turn queued setup into a real task identity, report that host limitation and stop.
 
+### Canonical create payload
+
+Use the smallest target by default. Keep `projectId` only inside `target`; never repeat it at the top level:
+
+```json
+{
+  "target": {
+    "type": "project",
+    "projectId": "<project ID returned by list_projects>",
+    "environment": {
+      "type": "worktree"
+    }
+  },
+  "prompt": "CODEX_EXECUTION_GUARD_BOOTSTRAP_V1\n<bounded bootstrap instructions>"
+}
+```
+
+Only when the approved task must start from a named existing branch may `environment` include:
+
+```json
+{
+  "type": "worktree",
+  "startingState": {
+    "type": "branch",
+    "branchName": "main"
+  }
+}
+```
+
+Do not use `startingState` to name the new feature branch. Host-advertised fields such as title, model, and reasoning may accompany this canonical target. The marked bootstrap preflight rejects a top-level `projectId`, a missing or wrong project/worktree target, and an incomplete branch `startingState` before host dispatch. It does not inspect ordinary `create_thread` calls without the bootstrap marker.
+
 ## Bootstrap prompt requirements
 
-Include the goal and proposed iteration identifier, then state all of these boundaries:
+Put `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` on the first line by itself. Then include the goal and proposed iteration identifier and state all of these boundaries:
 
 - The task is the iteration's intended worktree and must not create, fork, delegate, hand off, or add a worktree.
 - Only inspect and report environment identity; establish the one named feature branch only when detached.
 - Do not modify project files, register or change a plan, implement, validate, commit, or publish.
 - Return exact `cwd`, linked-worktree status, branch, full `HEAD`, and Git status.
 
-Keep the execution marker out of this prompt.
+Keep `CODEX_EXECUTION_GUARD_CONTRACT_V1` out of this prompt. The bootstrap marker performs payload preflight only; it does not activate execution state.
 
 ## Reuse and close
 

@@ -108,8 +108,8 @@ V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/con
 
 1. 通过 Codex 原生项目工具找到真实 Git 项目。
 2. 使用该功能链已经固定的 implementation 或 acceptance iteration ID，在 V2 registry 中持锁 claim。第一次只返回一次 `create_once`；之后永远是 `reconcile_only`。
-3. 只有拿到 `create_once` 时，才创建一个左侧可见、环境类型为 worktree 的任务，而且只调用一次。
-4. 创建工具返回任务、`clientThreadId`、错误或超时后都不重试。通过宿主状态面或有界的任务列表做 reconcile；零个或多个候选都停止，不自动归档。
+3. 只有拿到 `create_once` 时，才创建一个左侧可见、环境类型为 worktree 的任务。bootstrap prompt 第一行使用独立的 `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` 标记，Hook 会在请求到达宿主前预检参数。
+4. 若 Hook 明确返回 `before host dispatch`，说明宿主尚未收到请求；保留同一次 `create_once` 授权，直接修正 payload，不要重新 claim。预检通过后，任务、`clientThreadId`、错误或超时都算已经调用宿主，不能再创建。通过宿主状态面或有界的任务列表做 reconcile；零个或多个候选都停止，不自动归档。
 5. 把 `clientThreadId` 只当成排队标识，等待唯一真实 `threadId`。
 6. 设置清楚的任务标题，让任务只报告 `cwd`、linked worktree 身份、分支、完整 `HEAD` 和 Git 状态。
 7. 若任务处于 detached HEAD，只建立并切换一条唯一的 `codex/<iteration>` 分支。
@@ -117,7 +117,36 @@ V2 本地所有权记录沿用目标宿主已有的私有路径 `PLUGIN_DATA/con
 9. 只有一个候选且完整报告验证通过后，才把 claim 原子 finalize 为 `active`。重复 finalize 同一身份是幂等的，冲突身份会停止。
 10. 主控根据 active ownership 编译并私有保存合同，再发送短引用。
 
-用于取得环境身份的第一次提示不带激活标记，也不允许写代码、登记计划、验证、提交或再创建任务。
+默认使用最小 payload，`projectId` 只放在 `target` 内：
+
+```json
+{
+  "target": {
+    "type": "project",
+    "projectId": "<list_projects 返回的项目 ID>",
+    "environment": {
+      "type": "worktree"
+    }
+  },
+  "prompt": "CODEX_EXECUTION_GUARD_BOOTSTRAP_V1\n<只核对环境的 bootstrap 指令>"
+}
+```
+
+只有任务明确要求从已有分支启动时，`environment` 才增加完整的 branch `startingState`：
+
+```json
+{
+  "type": "worktree",
+  "startingState": {
+    "type": "branch",
+    "branchName": "main"
+  }
+}
+```
+
+不要用 `startingState` 给新功能分支命名，也不要在顶层重复 `projectId`。标题、模型和思考强度等宿主字段可以与上述 target 并列。
+
+用于取得环境身份的第一次提示带 bootstrap 预检标记，但不带 `CODEX_EXECUTION_GUARD_CONTRACT_V1` 激活标记，也不允许写代码、登记计划、验证、提交或再创建任务。
 
 ## 8. 执行合同
 
@@ -222,6 +251,10 @@ codex plugin add codex-execution-guard@codex-execution-guard
 ### `create_thread` 报错或超时
 
 不要重试。该调用可能已经在宿主产生副作用。重新读取同一 iteration 的 claim 会得到 `reconcile_only`，随后只检查原生任务列表：恰好一个候选才继续 bootstrap；零个或多个候选都停止并交回人工判断。
+
+### Guard 提示参数在宿主调用前被拒绝
+
+只有错误中明确包含 `before host dispatch` 时，才表示这次请求没有到达宿主。按提示移除顶层 `projectId`，补齐 `target.projectId`，或把 `startingState` 改成完整 branch 结构，然后在原 `create_once` 授权下重新提交；不要再次 claim。任何没有这句确认的错误、超时或排队结果都按上一节处理，不得重试。
 
 ### 合同引用无法激活
 

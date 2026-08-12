@@ -32,7 +32,7 @@ Inline V1 JSON remains compatible for first activation. Use it by default only f
 When the control task does not yet know the real execution task, worktree, branch, or HEAD, follow [control-orchestration.md](control-orchestration.md) and:
 
 1. Resolve create versus reuse, select the execution model from host-advertised and authorized evidence, and atomically claim a new iteration before any native create call.
-2. Send a bootstrap prompt without the contract marker. Authorize only establishing or checking the unique feature branch and reporting `cwd`, worktree identity, branch, `HEAD`, and status. Explicitly forbid implementation, plan changes, delegation, and additional tasks or worktrees.
+2. Send a bootstrap prompt that starts with `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` but does not contain the contract marker. The bootstrap marker enables `create_thread` payload preflight without activating execution state. Authorize only establishing or checking the unique feature branch and reporting `cwd`, worktree identity, branch, `HEAD`, and status. Explicitly forbid implementation, plan changes, delegation, and additional tasks or worktrees.
 3. Reconcile native state without retrying create. Continue only after exactly one real `threadId` and one verified environment report can atomically finalize the claim to active ownership.
 4. Compile `baseline`. On the same host, stage the complete canonical contract privately and send the marker plus short reference. Use the labeled folded-inline fallback only when target `PLUGIN_DATA` is unavailable across hosts.
 

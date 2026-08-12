@@ -118,7 +118,7 @@ Control compiles the goal, scope, frozen decisions, non-goals, plan, acceptance,
 | `AGENTS.md` trigger | Requires both keys only to establish a feature chain without matching active ownership; an exact active implementation chain reuses existing lanes or claims its sole deterministic acceptance lane without another Guard invocation. |
 | Control Skill | Decides create versus reuse, claims before creation, creates once or reconciles, selects a model, verifies Git, and stages the private handoff. |
 | Execution Skill | Compiles and executes a versioned contract, registers a stable `update_plan`, implements locally, validates, and returns evidence. |
-| Hooks | Guard marked execution sessions before writes, at plan updates, during compaction and resume, and at task stop. |
+| Hooks | Preflight native arguments for marked Guard bootstrap creation, then guard marked execution sessions before writes, at plan updates, during compaction and resume, and at task stop. |
 | Local state helpers | Persist one-shot creation claims, atomic ownership, private contract artifacts, and execution progress without MCP, a server, a database, or an account system. |
 
 Read [Architecture and principles](docs/ARCHITECTURE.en.md) for the full design.
@@ -129,6 +129,7 @@ Read [Architecture and principles](docs/ARCHITECTURE.en.md) for the full design.
 - Reuse one implementation lane for an approved exact active-chain continuation, optimization, acceptance-failure fix, test, documentation update, or recheck without another Guard invocation.
 - When that active implementation chain has a concrete approved isolation need, claim its sole deterministic acceptance lane without another invocation; only the first claim may create once, and every later attempt reconciles or reuses the same lane.
 - Persist a locked one-shot claim before `create_thread`; an error, timeout, crash, reload, or queued `clientThreadId` never grants another create call.
+- Use a dedicated Guard bootstrap marker and canonical project/worktree target. Before host dispatch, the Hook rejects a top-level `projectId`, a wrong environment, or an incomplete branch `startingState`. Only an explicit local denial containing `before host dispatch` permits a corrected submission; once preflight passes, the one-call rule still applies.
 - Reconcile every later claim and finalize only from exactly one real task with a complete Git identity; zero or multiple candidates stop.
 - Wait for a real `threadId`; never activate execution from a queued `clientThreadId`.
 - Keep the complete same-host contract in private `PLUGIN_DATA`; visible chat shows a UTF-8-bounded single-line task goal and short reference, and the Hook verifies size, digest, contract ID, session, active ownership, and Git baseline before state creation.
@@ -180,7 +181,7 @@ python3 /path/to/plugin-creator/scripts/validate_plugin.py \
   plugins/codex-execution-guard
 ```
 
-The current fixtures cover one-shot creation claims, concurrency and reconcile-only recovery, V1 registry migration, private contract references and binding failures, feature-chain reuse, terminal write locks, safe revision rollover, Git baseline checks, exact recovery, evidence deduplication, and completion decisions. Fresh-host installation, Hook trust, and side effects inside one host call remain explicit manual checks after restart.
+The current fixtures cover Guard bootstrap argument preflight, fail-open ordinary `create_thread` calls, one-shot creation claims, concurrency and reconcile-only recovery, V1 registry migration, private contract references and binding failures, feature-chain reuse, terminal write locks, safe revision rollover, Git baseline checks, exact recovery, evidence deduplication, and completion decisions. Fresh-host installation, Hook trust, and side effects inside one host call remain explicit manual checks after restart.
 
 ## License
 

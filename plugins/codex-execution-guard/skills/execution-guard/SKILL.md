@@ -32,7 +32,7 @@ This active feature-chain identity lasts until the chain is explicitly merged or
 2. Use the **execution** path only for an exact `CODEX_EXECUTION_GUARD_CONTRACT_V1` marker with a valid contract, or when resuming its persisted state. Read [execution-contract.md](references/execution-contract.md) and [lifecycle-and-progress.md](references/lifecycle-and-progress.md).
 3. Use [examples.md](references/examples.md) only when producing a bootstrap, contract, plan update, escalation, or receipt.
 
-Without the marker, do not create guard state, steer the task, or block tools.
+Without the execution-contract marker, do not create guard state or steer execution. The only control-stage exception is the standalone bootstrap marker, which enables narrow `create_thread` payload preflight without activating a contract. Ordinary calls without either marker remain unaffected.
 
 ## Control the iteration
 
@@ -40,6 +40,7 @@ Without the marker, do not create guard state, steer the task, or block tools.
 - Use Codex-native project and task tools for discovery, creation, waiting, naming, and messaging. Use the bundled V2 registry only for durable iteration ownership; do not replace native tools with MCP or a project manager.
 - Before the first claim, freeze one stable feature-chain key and deterministic implementation iteration ID. Keep that one implementation lane for the whole chain. Only a real environment or responsibility-separation need may freeze one deterministic acceptance iteration ID; every later recheck claims that exact ID again and reuses or reconciles its existing lane, never an `acceptance-v2` or `acceptance-v3`. Every code fix returns to implementation. This cap is control-orchestration policy, not a registry-schema hard limit; do not migrate the registry to enforce it.
 - Atomically claim a new iteration before `create_thread`. Only the first claim authorizes that one call. Every later claim is `reconcile_only`, including after an error, timeout, crash, reload, or queued `clientThreadId`; never clear or expire a claim automatically.
+- Start every Guard bootstrap prompt with the standalone `CODEX_EXECUTION_GUARD_BOOTSTRAP_V1` marker and use the canonical project/worktree target. Its `PreToolUse` preflight rejects a malformed marked payload before host dispatch; only that explicit local denial permits correcting the payload under the same `create_once` authorization. Once preflight passes, any host result consumes the one call and remains no-retry.
 - Finalize ownership only after reconciliation finds exactly one real `threadId` with a verified worktree, branch, `HEAD`, and status. Zero or multiple candidates stop without another create or automatic archive.
 - On the same host, stage the canonical contract under private `PLUGIN_DATA` and send only a UTF-8-bounded single-line goal plus the short SHA-256 reference. Use the labeled folded-inline fallback only when target `PLUGIN_DATA` cannot be staged across hosts.
 

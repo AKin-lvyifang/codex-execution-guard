@@ -27,7 +27,7 @@ Primary flow:
 2. Control resolves the real project and decides whether the approved work reuses the active iteration or creates a new one.
 3. Control discovers host-advertised model capabilities, intersects them with the authorized pool, and reports requested versus verified actual model state.
 4. For a new iteration, control atomically persists a V2 creation claim before one native create call. Every later entry is reconciliation-only, including after queue state, error, timeout, crash, or reload.
-5. Control continues only when reconciliation finds exactly one real task. It verifies the marker-free bootstrap, then atomically finalizes host, `threadId`, worktree, branch, and baseline as active ownership.
+5. Control continues only when reconciliation finds exactly one real task. It verifies the contract-marker-free bootstrap, then atomically finalizes host, `threadId`, worktree, branch, and baseline as active ownership.
 6. Control compiles the approved decisions plus baseline into canonical JSON under private target `PLUGIN_DATA` and sends only a short SHA-256 reference in visible chat.
 7. The Hook validates artifact format, size, hash, contract ID, session, active ownership, and live baseline before state creation. The execution task then registers the approved steps in `update_plan` before writing code.
 8. The task implements the contract, records only relevant evidence, and survives compaction or resume without source-level truncation of contract boundaries, plan, or acceptance.
@@ -144,13 +144,13 @@ Do not add hashes, fingerprints, integrity layers, new gate frameworks, or valid
 Use opt-in lifecycle hooks for guarded execution sessions:
 
 - `UserPromptSubmit`: resolve inline V1 or a private reference, validate all artifact bindings, and only then create structured execution state.
-- `PreToolUse`: protect writes until environment and plan registration are ready; inspect covered local tool calls.
+- `PreToolUse`: preflight marked Guard bootstrap `create_thread` arguments before host dispatch; after contract activation, protect writes until environment and plan registration are ready and inspect covered local tool calls.
 - `PostToolUse`: record plan transitions and relevant validation evidence.
 - `PreCompact`: persist the latest structured checkpoint.
 - `SessionStart` on resume or compact: restore every contract boundary plus the exact current plan and acceptance arrays, Git identity, and recorded evidence without source-level character truncation.
 - `Stop`: continue only when an approved step or acceptance item remains incomplete; otherwise allow a receipt.
 
-Hooks must remain inert in ordinary chats and sessions without an active contract marker.
+Hooks must remain inert in ordinary chats and calls without either Guard marker. The bootstrap marker may trigger only narrow `create_thread` payload preflight and must not create execution state; the contract marker keeps its existing opt-in lifecycle behavior.
 
 A completed or escalated contract is terminal and write-locked. Plain-language follow-ups cannot reopen writes. Control may continue the same task only with the same `contract_id`, worktree, and branch through a private reference that revalidates active ownership and the refreshed Git baseline. The prior terminal state is content-addressed before the revised state is installed atomically; failed installation preserves the locked prior state and one reusable archive.
 
@@ -219,6 +219,10 @@ Resolution: `clientThreadId` is only setup state. Control waits for a real `thre
 
 Resolution: persist `claimed` before the native call. Only the first locked claim returns `create_once`; later claims are permanently `reconcile_only`. Errors, timeouts, crashes, reloads, and `clientThreadId` never clear the claim. Reconciliation continues only for exactly one candidate and never archives ambiguous candidates automatically.
 
+### Control assembles an invalid native create payload
+
+Resolution: begin every Guard bootstrap prompt with a dedicated versioned marker and preflight only that marked `create_thread` request. The canonical target keeps `projectId` under `target`, requires a project/worktree environment, omits `startingState` by default, and accepts it only as a complete named branch object. A denial explicitly issued before host dispatch permits correction under the existing `create_once` authorization; once preflight passes, all host outcomes retain the no-retry rule. Ordinary unmarked creation remains fail-open.
+
 ### One feature produces endless acceptance worktrees
 
 Resolution: freeze one feature-chain key, derive one deterministic implementation iteration ID, and derive a single acceptance ID only when isolation is required. Acceptance detail, retry, optimization, and failed-acceptance fixes resolve the same lanes. Retry-specific `acceptance-v2`, `acceptance-v3`, and timestamped IDs are forbidden by orchestration policy.
@@ -241,7 +245,7 @@ Resolution: separate host-advertised schema evidence from the local authorized-p
 
 ### Global hook accidentally affects normal tasks
 
-Resolution: require an explicit versioned contract marker and session-scoped state. Without it, hooks exit successfully without steering or blocking.
+Resolution: require an explicit versioned marker. The bootstrap marker enables only narrow create-payload preflight, while the contract marker and session-scoped state enable lifecycle guarding. Without either marker, hooks exit successfully without steering or blocking.
 
 ### Executor expands the plan through `update_plan`
 
@@ -275,23 +279,24 @@ Resolution: one focused control helper, one small shared contract protocol, and 
 
 1. Same-feature implementation, optimization, acceptance detail, recheck, failed-acceptance fix, test, and documentation reuse deterministic lanes; only independent user value or a known chain restarted after merge or cancellation creates ownership; ambiguity stops.
 2. Sequential and concurrent claims grant exactly one `create_once`; every later claim returns `reconcile_only`.
-3. An error, timeout, crash, reload, or queued `clientThreadId` cannot clear a claim or authorize another native create call.
-4. Finalize accepts exactly one real verified task, is atomic and idempotent, and stops on zero, multiple, dirty, detached, incomplete, or conflicting candidates without retry or automatic archive.
-5. The next locked write migrates V1 to V2 without losing existing active or closed records.
-6. The default fixture handoff includes a readable single-line goal, remains below 600 UTF-8 bytes through character-safe truncation, and exposes no full JSON, arrays, or absolute worktree path.
-7. Missing, oversized, malformed, tampered, wrong-ID, wrong-session, inactive-ownership, and wrong-baseline artifacts fail before partial session state; reference plus inline JSON is rejected.
-8. Inline V1 remains compatible, and an ordinary unmarked chat remains fail-open.
-9. Activation and simulated compact/resume preserve every contract boundary plus the exact plan and acceptance arrays without source-level truncation.
-10. Host-advertised and authorized model evidence is intersected, local fallback is labeled non-live, and actual model state is not fabricated.
-11. A guarded execution task cannot write before environment verification and exact plan registration.
-12. An unapproved plan step addition is rejected with a return-to-control-task message.
-13. Required validation evidence is recorded once; unchanged duplicate validation does not become progress.
-14. `Stop` continues an incomplete contract and allows completion after all approved acceptance items are satisfied.
-15. The plugin and Skill validators plus control and lifecycle fixtures pass.
-16. Fresh-host task creation, actual runtime model identity, marketplace reload, Skill discovery, Hook trust, and host-side context delivery remain explicit manual checks rather than fixture claims.
-17. No MCP configuration, server, database, network dependency, telemetry, remote Git action, personal path, live registry, contract artifact, or transcript is included in the distributable source commit.
-18. Completed and escalated contracts deny plan changes and writes until a same-contract private reference revalidates active ownership, session, worktree, branch, and baseline; inline V1 remains first-activation only.
-19. If terminal revision installation fails after archival, the prior state remains authoritative and locked. Resume, compact, and read-only validation do not mutate it, so retrying the same reference retains exactly one archive.
+3. A marked Guard bootstrap rejects a top-level `projectId`, a wrong project/worktree target, or an incomplete branch `startingState` before host dispatch; the minimal target and complete named-branch target pass, and an ordinary unmarked `create_thread` remains unaffected.
+4. Only a Guard denial explicitly issued before host dispatch permits payload correction under the same claim. An error, timeout, crash, reload, or queued `clientThreadId` after preflight cannot clear a claim or authorize another native create call.
+5. Finalize accepts exactly one real verified task, is atomic and idempotent, and stops on zero, multiple, dirty, detached, incomplete, or conflicting candidates without retry or automatic archive.
+6. The next locked write migrates V1 to V2 without losing existing active or closed records.
+7. The default fixture handoff includes a readable single-line goal, remains below 600 UTF-8 bytes through character-safe truncation, and exposes no full JSON, arrays, or absolute worktree path.
+8. Missing, oversized, malformed, tampered, wrong-ID, wrong-session, inactive-ownership, and wrong-baseline artifacts fail before partial session state; reference plus inline JSON is rejected.
+9. Inline V1 remains compatible, and an ordinary unmarked chat remains fail-open.
+10. Activation and simulated compact/resume preserve every contract boundary plus the exact plan and acceptance arrays without source-level truncation.
+11. Host-advertised and authorized model evidence is intersected, local fallback is labeled non-live, and actual model state is not fabricated.
+12. A guarded execution task cannot write before environment verification and exact plan registration.
+13. An unapproved plan step addition is rejected with a return-to-control-task message.
+14. Required validation evidence is recorded once; unchanged duplicate validation does not become progress.
+15. `Stop` continues an incomplete contract and allows completion after all approved acceptance items are satisfied.
+16. The plugin and Skill validators plus control and lifecycle fixtures pass.
+17. Fresh-host task creation, actual runtime model identity, marketplace reload, Skill discovery, Hook trust, and host-side context delivery remain explicit manual checks rather than fixture claims.
+18. No MCP configuration, server, database, network dependency, telemetry, remote Git action, personal path, live registry, contract artifact, or transcript is included in the distributable source commit.
+19. Completed and escalated contracts deny plan changes and writes until a same-contract private reference revalidates active ownership, session, worktree, branch, and baseline; inline V1 remains first-activation only.
+20. If terminal revision installation fails after archival, the prior state remains authoritative and locked. Resume, compact, and read-only validation do not mutate it, so retrying the same reference retains exactly one archive.
 
 ## 10. Implemented release scope
 
@@ -306,3 +311,4 @@ The 0.3.x release line implements the following scope:
 7. Restore the complete contract, plan, acceptance, deviations, escalation, and evidence after compaction without plugin-side character truncation.
 8. Validate control, lifecycle, Skill, and plugin contracts while keeping marketplace reload, Hook trust, host delivery, and actual runtime-model identity as explicit host checks.
 9. Require explicit control intent plus an approved real-repository implementation to establish a new feature chain; reuse exact active implementation ownership for same-chain follow-ups and permit only one deterministic acceptance lane when isolation is approved.
+10. Preflight only explicitly marked Guard bootstrap creation payloads against the canonical project/worktree target before host dispatch, while leaving ordinary unmarked `create_thread` calls unchanged.
